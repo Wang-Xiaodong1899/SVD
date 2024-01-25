@@ -28,9 +28,8 @@ from .lora import LoRACompatibleConv, LoRACompatibleLinear
 from .normalization import AdaGroupNorm
 
 #TODO Information
-# resnet_action_v2
-# We remove the action adding to the resnet, rather than easily add the action info
-# We use the cross-attention to utilize action sequence frame-wise
+# resnet_action_v11
+# add image context to the first layer in all blocks
 
 
 class Upsample1D(nn.Module):
@@ -1247,12 +1246,7 @@ class SpatioTemporalResBlockContext(nn.Module):
         switch_spatial_to_temporal_mix: bool = False,
         add_action: bool = False,
         add_context: bool = False,
-        scale_factor: int = 1,
-        latent_h: int = 24,
-        latent_w: int = 48,
-        dropout_action: float = 0.0,
         groups: int = 32,
-        non_linearity: str = "swish",
     ):
         super().__init__()
 
@@ -1263,6 +1257,8 @@ class SpatioTemporalResBlockContext(nn.Module):
         self.add_context = add_context
 
         print('add image context parameters')
+
+        print(f'down & mid context in channel: {in_channels}')
 
         # for image condition, same feature size with resblock
         # self.image_conv1 = nn.Conv2d(in_channels=our_chn, out_channels=our_chn, kernel_size=3, stride=1, padding=1)
@@ -1279,7 +1275,6 @@ class SpatioTemporalResBlockContext(nn.Module):
             temb_channels=temb_channels,
             eps=eps,
         )
-        print(f'spatial out_channels: {out_channels}')
 
         self.temporal_res_block = TemporalResnetBlock(
             in_channels=out_channels if out_channels is not None else in_channels,
@@ -1319,6 +1314,8 @@ class SpatioTemporalResBlockContext(nn.Module):
         
         hidden_states = self.spatial_res_block(hidden_states, temb)
 
+        # print(f'hs after spatial res block {hidden_states.shape}')
+
         batch_frames, channels, height, width = hidden_states.shape
         batch_size = batch_frames // num_frames
 
@@ -1337,6 +1334,146 @@ class SpatioTemporalResBlockContext(nn.Module):
             image_context = rearrange(image_context, 'b t c h w -> (b t) c h w')
             image_gamma = self.image_gamma(image_context)
             image_beta = self.image_beta(image_context)
+            # TODO add norm
+            hidden_states = hidden_states + self.apply_norm(self.image_norm, hidden_states)* image_gamma + image_beta
+        
+        hidden_states = (
+            hidden_states[None, :].reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
+        )
+
+        hidden_states = self.temporal_res_block(hidden_states, temb)
+        hidden_states = self.time_mixer(
+            x_spatial=hidden_states_mix, # no adding image context
+            x_temporal=hidden_states,
+            image_only_indicator=image_only_indicator,
+        )
+
+        hidden_states = hidden_states.permute(0, 2, 1, 3, 4).reshape(batch_frames, channels, height, width)
+        return hidden_states
+
+# Add action and image context
+class SpatioTemporalResUpBlockContext(nn.Module):
+    r"""
+    A SpatioTemporal Resnet block.
+
+    Parameters:
+        in_channels (`int`): The number of channels in the input.
+        out_channels (`int`, *optional*, default to be `None`):
+            The number of output channels for the first conv2d layer. If None, same as `in_channels`.
+        temb_channels (`int`, *optional*, default to `512`): the number of channels in timestep embedding.
+        eps (`float`, *optional*, defaults to `1e-6`): The epsilon to use for the spatial resenet.
+        temporal_eps (`float`, *optional*, defaults to `eps`): The epsilon to use for the temporal resnet.
+        merge_factor (`float`, *optional*, defaults to `0.5`): The merge factor to use for the temporal mixing.
+        merge_strategy (`str`, *optional*, defaults to `learned_with_images`):
+            The merge strategy to use for the temporal mixing.
+        switch_spatial_to_temporal_mix (`bool`, *optional*, defaults to `False`):
+            If `True`, switch the spatial and temporal mixing.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: Optional[int] = None,
+        temb_channels: int = 512,
+        eps: float = 1e-6,
+        temporal_eps: Optional[float] = None,
+        merge_factor: float = 0.5,
+        merge_strategy="learned_with_images",
+        switch_spatial_to_temporal_mix: bool = False,
+        add_action: bool = False,
+        add_context: bool = False,
+        groups: int = 32,
+        is_same_channel: bool = True,
+    ):
+        super().__init__()
+
+        # need input action and context
+        # action (bs,t, 2)
+        # context (bs, c, h, w) -> repeat (bs, t, h, w)
+        self.add_action = add_action
+        self.add_context = add_context
+
+        print('add image context parameters')
+
+        if is_same_channel:
+            context_channels = out_channels
+        else:
+            context_channels = out_channels // 2
+        
+        print(f'up block context in channels: {context_channels}')
+
+        #TODO test for only image context
+        self.image_gamma = zero_module(nn.Conv2d(in_channels=context_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1))
+        self.image_beta = zero_module(nn.Conv2d(in_channels=context_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1))
+        self.image_norm = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
+
+        self.spatial_res_block = ResnetBlock2D(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            temb_channels=temb_channels,
+            eps=eps,
+        )
+
+        self.temporal_res_block = TemporalResnetBlock(
+            in_channels=out_channels if out_channels is not None else in_channels,
+            out_channels=out_channels if out_channels is not None else in_channels,
+            temb_channels=temb_channels,
+            eps=temporal_eps if temporal_eps is not None else eps,
+        )
+
+        self.time_mixer = AlphaBlender(
+            alpha=merge_factor,
+            merge_strategy=merge_strategy,
+            switch_spatial_to_temporal_mix=switch_spatial_to_temporal_mix,
+        )
+    
+    def apply_norm(self, norm, x):
+        if len(x.size()) == 4:
+            return norm(x)
+        if len(x.size()) == 5:
+            b, l, _, _, _ = x.size()
+            x = rearrange(x, 'b l c h w -> (b l) c h w')
+            x = norm(x)
+            x = rearrange(x, '(b l) c h w -> b l c h w', b=b, l=l)
+            return x
+
+    def forward(
+        self,
+        hidden_states: torch.FloatTensor,
+        temb: Optional[torch.FloatTensor] = None,
+        image_only_indicator: Optional[torch.Tensor] = None,
+        action: Optional[torch.FloatTensor] = None,
+        image_context: Optional[torch.FloatTensor] = None,
+    ):
+        num_frames = image_only_indicator.shape[-1]
+        
+        # inserting image context to hidden states after spatial makes sense
+        # print(f'hs shape: {hidden_states.shape}, image context shape: {image_context.shape}')
+        
+        hidden_states = self.spatial_res_block(hidden_states, temb)
+
+        # print(f'hs after spatial res block {hidden_states.shape}')
+
+        batch_frames, channels, height, width = hidden_states.shape
+        batch_size = batch_frames // num_frames
+
+        hidden_states_mix = (
+            hidden_states[None, :].reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
+        )
+
+        if temb is not None:
+            temb = temb.reshape(batch_size, num_frames, -1)
+        
+        # to avoid repeat the first frames
+        # image context only insert into temporal layers
+        if image_context is not None:
+            # original (b, c, h, w) outside, we repeat here
+            image_context = repeat(image_context, 'b c h w -> b t c h w', t=num_frames)
+            image_context = rearrange(image_context, 'b t c h w -> (b t) c h w')
+            image_gamma = self.image_gamma(image_context)
+            image_beta = self.image_beta(image_context)
+
+            # print(f'UP image gamma shape {image_gamma.shape}')
             # TODO add norm
             hidden_states = hidden_states + self.apply_norm(self.image_norm, hidden_states)* image_gamma + image_beta
         
