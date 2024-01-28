@@ -10,15 +10,21 @@ from ..utils import BaseOutput, logging
 from .attention_processor import CROSS_ATTENTION_PROCESSORS, AttentionProcessor, AttnProcessor
 from .embeddings import TimestepEmbedding, Timesteps
 from .modeling_utils import ModelMixin
-from .unet_3d_blocks_action_v11 import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
+from .unet_3d_blocks_action_v14 import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
 from .resnet_action import Downsample2D
+from .activations import get_activation
+from einops import rearrange, repeat
 
-# NOTE V11
-# we add image context to first layers of down, mid, up blocks 
-# To enhance the image guidance
+# NOTE
+# V14
+# V1 denote we insert image context to down,mid,up blocks
+# V14 denote the action follow the V04 method
+# scale the action to number, and like the motion score, cross attend temporal layers
+# Because we add action embedding with time-embedding.
+# We need add action_cross_dim=1024
+
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-
 
 @dataclass
 class UNetSpatioTemporalConditionOutput(BaseOutput):
@@ -164,6 +170,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         blocks_time_embed_dim = time_embed_dim
 
         #TODO: add action & context frame
+        self.scale_factor = 1
 
         fore_channel_mult = [1, 2, 4, 4] #align with z latent code
         fore_channels = 320 # align with latent code
@@ -189,6 +196,12 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     )
                 )
             self.context_block.append(nn.Sequential(*layers_t))
+        
+        # TODO add action embedding
+        self.action_proj = Timesteps(addition_time_embed_dim, True, downscale_freq_shift=0)
+        self.action_embedding = TimestepEmbedding(addition_time_embed_dim*2, time_embed_dim, out_dim=time_embed_dim) # 2 because steer and speed numbers
+
+        # We align action_embedding with time_embed_dim, so we can plus action_emb to emb
 
         # down
         output_channel = block_out_channels[0]
@@ -209,8 +222,14 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 cross_attention_dim=cross_attention_dim[i],
                 num_attention_heads=num_attention_heads[i],
                 resnet_act_fn="silu",
+                scale_factor=self.scale_factor,
+                temp_cross_attention_dim=time_embed_dim
             )
             self.down_blocks.append(down_block)
+            if(is_final_block):
+                self.scale_factor = self.scale_factor * 1
+            else:
+                self.scale_factor = self.scale_factor * 2
 
         # mid
         self.mid_block = UNetMidBlockSpatioTemporal(
@@ -219,6 +238,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
             transformer_layers_per_block=transformer_layers_per_block[-1],
             cross_attention_dim=cross_attention_dim[-1],
             num_attention_heads=num_attention_heads[-1],
+            scale_factor=self.scale_factor,
+            temp_cross_attention_dim=time_embed_dim
         )
 
         # count how many layers upsample the images
@@ -245,10 +266,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 self.num_upsamplers += 1
             else:
                 add_upsample = False
-            
-            is_same_channel = True
-            if i in [1, 2]:
-                is_same_channel = False
+
             up_block = get_up_block(
                 up_block_type,
                 num_layers=reversed_layers_per_block[i] + 1,
@@ -263,10 +281,15 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 cross_attention_dim=reversed_cross_attention_dim[i],
                 num_attention_heads=reversed_num_attention_heads[i],
                 resnet_act_fn="silu",
-                is_same_channel=is_same_channel
+                scale_factor=self.scale_factor,
+                temp_cross_attention_dim=time_embed_dim
             )
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel
+            if(is_final_block):
+                self.scale_factor = self.scale_factor * 1
+            else:
+                self.scale_factor = self.scale_factor // 2
 
         # out
         self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[0], num_groups=32, eps=1e-5)
@@ -407,6 +430,9 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
             timestep (`torch.FloatTensor` or `float` or `int`): The number of timesteps to denoise an input.
             encoder_hidden_states (`torch.FloatTensor`):
                 The encoder hidden states with shape `(batch, sequence_length, cross_attention_dim)`.
+            added_time_ids: (`torch.FloatTensor`):
+                The additional time ids with shape `(batch, num_additional_ids)`. These are encoded with sinusoidal
+                embeddings and added to the time embeddings.
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~models.unet_slatio_temporal.UNetSpatioTemporalConditionOutput`] instead of a plain
                 tuple.
@@ -451,6 +477,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         # time_embeds = time_embeds.to(emb.dtype)
         # aug_emb = self.add_embedding(time_embeds)
         # emb = emb + aug_emb
+        # not add added_time_ids
 
         # Flatten the batch and frames dimensions
         # sample: [batch, frames, channels, height, width] -> [batch * frames, channels, height, width]
@@ -460,6 +487,14 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         # Repeat the embeddings num_video_frames times
         # emb: [batch, channels] -> [batch * frames, channels]
         emb = emb.repeat_interleave(num_frames, dim=0)
+
+        # NOTE
+        # Fix the emb
+        # Because the normal fps, motion is bind with the whole video
+        # so it add to emb and then repeat
+        # But frame-wise can not do this, such as action, which are aligned with frames
+        # add after repeat
+
         # encoder_hidden_states: [batch, 1, channels] -> [batch * frames, 1, channels]
         encoder_hidden_states = encoder_hidden_states.repeat_interleave(num_frames, dim=0)
 
@@ -478,6 +513,17 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         # [40, 20, 10, 5]
         # for context in context_frames:
             # print('context shape: ', context.shape)
+        # action input (b*l, 2) -> b 2 l d
+        action = action.to(sample.device)
+        action_embeds = self.action_proj(action.flatten())
+        action_embeds = action_embeds.reshape((batch_size*num_frames, -1))
+        action_embeds = action_embeds.to(emb.dtype)
+        action_emb = self.action_embedding(action_embeds)
+        # NOTE
+        # # action add after repeat
+        emb = emb + action_emb # (b*l, d)
+
+        action_emb = rearrange(action_emb, '(b l) d -> b l d', b=batch_size)
 
         #TODO: remember only add to first resblock
         down_block_res_samples = (sample,)
@@ -491,7 +537,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
-                    action=action,
+                    action=action_emb,
                     image_context=context_frames[idx],
                 )
             else:
@@ -501,7 +547,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     hidden_states=sample,
                     temb=emb,
                     image_only_indicator=image_only_indicator,
-                    action=action,
+                    action=action_emb,
                     image_context=context_frames[idx],
                 )
 
@@ -515,7 +561,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
             temb=emb,
             encoder_hidden_states=encoder_hidden_states,
             image_only_indicator=image_only_indicator,
-            action=action,
+            action=action_emb,
             image_context=context_frames[-1], # smallest feature map
         )
 
@@ -537,7 +583,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     res_hidden_states_tuple=res_samples,
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
-                    image_context = context_frames[-(i+2)]
+                    action=action_emb,
+                    # image_context=context_frames[context_len-i-1],
                 )
             else:
                 # print(f'UP NO_cross_attention')
@@ -547,7 +594,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
                     image_only_indicator=image_only_indicator,
-                    image_context = context_frames[-(i+2)]
+                    action=action_emb,
+                    # image_context=context_frames[context_len-i-1],
                 )
 
         # 6. post-process

@@ -212,7 +212,6 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 cross_attention_dim=cross_attention_dim[i],
                 num_attention_heads=num_attention_heads[i],
                 resnet_act_fn="silu",
-                scale_factor=self.scale_factor,
             )
             self.down_blocks.append(down_block)
             if(is_final_block):
@@ -227,7 +226,6 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
             transformer_layers_per_block=transformer_layers_per_block[-1],
             cross_attention_dim=cross_attention_dim[-1],
             num_attention_heads=num_attention_heads[-1],
-            scale_factor=self.scale_factor,
         )
 
         # count how many layers upsample the images
@@ -254,6 +252,10 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 self.num_upsamplers += 1
             else:
                 add_upsample = False
+            
+            is_same_channel = True
+            if i in [1, 2]:
+                is_same_channel = False
 
             up_block = get_up_block(
                 up_block_type,
@@ -269,7 +271,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 cross_attention_dim=reversed_cross_attention_dim[i],
                 num_attention_heads=reversed_num_attention_heads[i],
                 resnet_act_fn="silu",
-                scale_factor=self.scale_factor,
+                is_same_channel=is_same_channel
             )
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel

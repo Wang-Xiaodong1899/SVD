@@ -226,6 +226,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         out_channels: Optional[int] = None,
         num_layers: int = 1,
         cross_attention_dim: Optional[int] = None,
+        temp_cross_attention_dim: Optional[int] = None,
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
@@ -262,7 +263,7 @@ class TransformerSpatioTemporalModel(nn.Module):
                     time_mix_inner_dim,
                     num_attention_heads,
                     attention_head_dim,
-                    cross_attention_dim=cross_attention_dim,
+                    cross_attention_dim=temp_cross_attention_dim if temp_cross_attention_dim else cross_attention_dim,
                 )
                 for _ in range(num_layers)
             ]
