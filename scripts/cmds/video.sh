@@ -1,0 +1,3 @@
+export MASTER_ADDR=$(scontrol show hostname ${SLURM_NODELIST} | head -n 1)
+echo $MASTER_ADDR
+accelerate launch --config_file /mnt/cache/wangxiaodong/.cache/huggingface/accelerate/zero2.yaml  --mixed_precision="fp16" /mnt/cache/wangxiaodong/SVD-Sense/scripts/text_to_video/finetune_nuscene_video_text_v11_s256.py --train_batch_size=2 --gradient_accumulation_steps=4 --gradient_checkpointing --num_train_epochs 100 --learning_rate=5e-5 --max_grad_norm=0.1 --enable_xformers_memory_efficient_attention --lr_scheduler=cosine --lr_warmup_steps=10 --output_dir=video-v11-ep100 --pretrained_model_name_or_path /mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp

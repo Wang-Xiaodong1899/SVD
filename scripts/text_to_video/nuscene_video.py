@@ -16,7 +16,7 @@ from einops import repeat
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
-DATAROOT = '/ssd_datasets/wxiaodong/nuscene'
+DATAROOT = '/mnt/lustrenew/wangxiaodong/data/nuscene'
 
 def image2pil(filename):
     return Image.open(filename)
@@ -58,7 +58,7 @@ class Videoframes(Dataset):
         # text tokenizer
 
         # read from json
-        json_path = '/ssd_datasets/wxiaodong/nuscene/frame_action_train.json'
+        json_path = '/mnt/lustrenew/wangxiaodong/data/nuscene/frame_action_train.json'
         with open(json_path, 'r') as f:
             self.frame_action = json.load(f)
         
@@ -67,7 +67,7 @@ class Videoframes(Dataset):
         print('Total samples: %d' % len(self.scenes))
 
         # utime-caption
-        json_path = '/ssd_datasets/wxiaodong/nuscene/nuscene_caption_utime_train.json'
+        json_path = '/mnt/lustrenew/wangxiaodong/data/nuscene/nuscene_caption_utime_train.json'
         with open(json_path, 'r') as f:
             self.caption_utime = json.load(f)
     

@@ -2,7 +2,7 @@
 # This file is for aliyun 1-GPU test
 
 import sys
-sys.path.append('/home/wxd/video-generation/diffusers/src')
+sys.path.append('/mnt/cache/wangxiaodong/SVD-Sense/src')
 
 import os
 import torch
@@ -26,12 +26,12 @@ from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-def load_models(pretrained_model_name_or_path = '/ssd_datasets/wxiaodong/ckpt/drive-video-s256-v01-ep100', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels/video-v11-ep100', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
-                '/ssd_datasets/wxiaodong/ckpt/drive-video-s256-v01-ep100', subfolder="text_encoder"
+                '/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="text_encoder"
     )
     vae = AutoencoderKL.from_pretrained(
-                '/ssd_datasets/wxiaodong/ckpt/drive-video-s256-v01-ep100', subfolder="vae"
+                '/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="vae"
     )
 
     text_encoder.eval()
@@ -39,9 +39,9 @@ def load_models(pretrained_model_name_or_path = '/ssd_datasets/wxiaodong/ckpt/dr
     text_encoder.to(device)
     vae.to(device)
 
-    tokenizer = CLIPTokenizer.from_pretrained('/ssd_datasets/wxiaodong/ckpt/drive-video-s256-v01-ep100', subfolder="tokenizer")
-    scheduler = DDPMScheduler.from_pretrained('/ssd_datasets/wxiaodong/ckpt/drive-video-s256-v01-ep100', subfolder="scheduler")
-    feature_extractor = CLIPImageProcessor.from_pretrained('/ssd_datasets/wxiaodong/ckpt/drive-video-s256-v01-ep100', subfolder="feature_extractor")
+    tokenizer = CLIPTokenizer.from_pretrained('/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="tokenizer")
+    scheduler = DDPMScheduler.from_pretrained('/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="scheduler")
+    feature_extractor = CLIPImageProcessor.from_pretrained('/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="feature_extractor")
 
     unet = UNetSpatioTemporalConditionModel_Action.from_pretrained(pretrained_model_name_or_path, subfolder="unet")
     unet.eval()
@@ -70,9 +70,9 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
     return generated_caption[0]
 
 def main(
-    pretrained_model_name_or_path = '/ssd_datasets/wxiaodong/ckpt/drive-video-s256-v01-ep100',
+    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels/video-v11-ep100',
     num_frames = 15,
-    root_dir = '/home/wxd/data/nuscene/FVD-center',
+    root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-center',
     train_frames = 8,
     device='cuda:0'
 ):
@@ -84,16 +84,16 @@ def main(
 
     print('loaded pipeline!')
     
-    meta_data = json2data('/home/wxd/data/nuscene/samples_group_sort_val.json')
-    files_dir = '/home/wxd/data/nuscene/val_group'
+    meta_data = json2data('/mnt/lustrenew/wangxiaodong/data/nuscene/samples_group_sort_val.json')
+    files_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/val_group'
 
     version = os.path.basename(pretrained_model_name_or_path)
 
     os.makedirs(os.path.join(root_dir, version), exist_ok=True)
 
     # caption model
-    git_processor_large = AutoProcessor.from_pretrained("/ssd_datasets/wxiaodong/ckpt/git-large-coco")
-    git_model_large = AutoModelForCausalLM.from_pretrained("/ssd_datasets/wxiaodong/ckpt/git-large-coco")
+    git_processor_large = AutoProcessor.from_pretrained("/mnt/lustrenew/wangxiaodong/git-large-coco")
+    git_model_large = AutoModelForCausalLM.from_pretrained("/mnt/lustrenew/wangxiaodong/git-large-coco")
     print('loaded caption model!')
 
     for item in tqdm(meta_data):

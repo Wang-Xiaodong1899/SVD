@@ -1961,6 +1961,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
                     return_dict=False,
+                    action=action
                 )[0]
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(resnet),
@@ -1977,6 +1978,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
                     return_dict=False,
+                    action=action
                 )[0]
                 hidden_states = resnet(
                     hidden_states,
@@ -2201,6 +2203,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
                     return_dict=False,
+                    action=action,
                 )[0]
             else:
                 hidden_states = resnet(
@@ -2215,6 +2218,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
                     return_dict=False,
+                    action=action,
                 )[0]
 
             output_states = output_states + (hidden_states,)
@@ -2447,6 +2451,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
                     return_dict=False,
+                    action=action
                 )[0]
             else:
                 hidden_states = resnet(
@@ -2461,6 +2466,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
                     return_dict=False,
+                    action=action
                 )[0]
             res_idx = res_idx + 1
         if self.upsamplers is not None:

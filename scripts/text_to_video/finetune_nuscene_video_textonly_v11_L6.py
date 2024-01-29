@@ -772,7 +772,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, max_video_len=6, size=(192, 384))
+        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, max_video_len=6, img_size=(192, 384))
 
 
     # DataLoaders creation:

@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/wxd/video-generation/diffusers/src')
+sys.path.append('/mnt/cache/wangxiaodong/SVD-Sense/src')
 
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer
@@ -40,7 +40,7 @@ from diffusers.utils import export_to_video
 
 from fvd import load_fvd_model, compute_fvd
 
-DATAROOT = '/ssd_datasets/wxiaodong/nuscene'
+DATAROOT = '/mnt/lustrenew/wangxiaodong/data/nuscene'
 
 import json
 

@@ -317,7 +317,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         num_frames = image_only_indicator.shape[-1]
         batch_size = batch_frames // num_frames
 
-        # print(f'encoder_hidden_states shape: {encoder_hidden_states.shape}')
+        # print(f'trans_temp encoder_hidden_states shape: {encoder_hidden_states.shape}')
 
         # NOTE only text 77 tokens, align with original version
 

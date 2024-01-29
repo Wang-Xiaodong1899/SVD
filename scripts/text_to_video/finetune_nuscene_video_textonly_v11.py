@@ -640,6 +640,7 @@ def main():
 
     miss_keys, ignore_keys = unet.load_state_dict(new_state_dicts, strict=False)
     if accelerator.is_main_process:
+        pass
         print('miss_keys: ', miss_keys)
         print('ignore_keys: ', ignore_keys)
 
@@ -772,7 +773,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, size=(192, 384))
+        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
 
 
     # DataLoaders creation:

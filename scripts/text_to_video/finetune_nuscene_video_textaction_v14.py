@@ -426,7 +426,7 @@ def parse_args():
     parser.add_argument(
         "--report_to",
         type=str,
-        default="wandb",
+        default="tensorboard",
         help=(
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
@@ -533,7 +533,7 @@ def main():
             ),
         )
     
-    args.output_dir = os.path.join('/ssd_datasets/wxiaodong/ckpt', args.output_dir)
+    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels', args.output_dir)
 
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 

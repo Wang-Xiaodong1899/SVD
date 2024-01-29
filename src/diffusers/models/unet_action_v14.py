@@ -222,7 +222,6 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 cross_attention_dim=cross_attention_dim[i],
                 num_attention_heads=num_attention_heads[i],
                 resnet_act_fn="silu",
-                scale_factor=self.scale_factor,
                 temp_cross_attention_dim=time_embed_dim
             )
             self.down_blocks.append(down_block)
@@ -238,7 +237,6 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
             transformer_layers_per_block=transformer_layers_per_block[-1],
             cross_attention_dim=cross_attention_dim[-1],
             num_attention_heads=num_attention_heads[-1],
-            scale_factor=self.scale_factor,
             temp_cross_attention_dim=time_embed_dim
         )
 
@@ -266,6 +264,10 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 self.num_upsamplers += 1
             else:
                 add_upsample = False
+            
+            is_same_channel = True
+            if i in [1, 2]:
+                is_same_channel = False
 
             up_block = get_up_block(
                 up_block_type,
@@ -281,7 +283,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 cross_attention_dim=reversed_cross_attention_dim[i],
                 num_attention_heads=reversed_num_attention_heads[i],
                 resnet_act_fn="silu",
-                scale_factor=self.scale_factor,
+                is_same_channel=is_same_channel,
                 temp_cross_attention_dim=time_embed_dim
             )
             self.up_blocks.append(up_block)
@@ -498,6 +500,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         # encoder_hidden_states: [batch, 1, channels] -> [batch * frames, 1, channels]
         encoder_hidden_states = encoder_hidden_states.repeat_interleave(num_frames, dim=0)
 
+        # print(f'encoder_hidden_states shape {encoder_hidden_states.shape}')
+
         # 2. pre-process
         sample = self.conv_in(sample)
 
@@ -583,8 +587,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     res_hidden_states_tuple=res_samples,
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
+                    image_context = context_frames[-(i+2)],
                     action=action_emb,
-                    # image_context=context_frames[context_len-i-1],
                 )
             else:
                 # print(f'UP NO_cross_attention')
@@ -594,8 +598,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
                     image_only_indicator=image_only_indicator,
+                    image_context = context_frames[-(i+2)],
                     action=action_emb,
-                    # image_context=context_frames[context_len-i-1],
                 )
 
         # 6. post-process
