@@ -36,7 +36,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/mnt/cache/wangxiaodong/SVD-Sense/src')
+sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline

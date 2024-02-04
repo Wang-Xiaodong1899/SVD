@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
+import fire
 
 # Use GIT-Large to caption keyframes
 
@@ -102,4 +103,4 @@ def main(
     print('Save Done!')
 
 if __name__ == '__main__':
-    main(split='train')
+    fire.Fire(main)

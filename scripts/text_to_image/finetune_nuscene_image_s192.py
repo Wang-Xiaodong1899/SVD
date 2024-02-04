@@ -1,10 +1,5 @@
-#!/usr/bin/env python
-# coding=utf-8
-
-# NOTE V14
-# V1x denote we insert image context to each blocks
-# Vx4 denote we scale the action embedding, cross attend the temporal layers
-# We also delete add_time_ids
+# NOTE
+# First version Text-to-Image on Nuscenes Keyframes dataset
 
 import argparse
 import logging
@@ -37,20 +32,14 @@ import sys
 sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 import diffusers
-from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
-from diffusers.models.unet_action_v14 import UNetSpatioTemporalConditionModel_Action
-
+from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
 from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
 from diffusers.utils.import_utils import is_xformers_available
 
+from nuscene import keyframes
 
-from nuscene_video import Videoframes
-from safetensors import safe_open
-from collections import OrderedDict
-
-from einops import rearrange, repeat
 
 if is_wandb_available():
     import wandb
@@ -60,6 +49,12 @@ if is_wandb_available():
 check_min_version("0.25.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
+
+DATASET_NAME_MAPPING = {
+    "lambdalabs/pokemon-blip-captions": ("image", "text"),
+    "/ssd_datasets/wxiaodong/naruto-blip-captions": ("image", "text"),
+}
+
 
 def save_model_card(
     args,
@@ -198,7 +193,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/ssd_datasets/wxiaodong/ckpt/drive-s256-ep40",
+        default="/mnt/lustrenew/wangxiaodong/models/stable-diffusion-v1-4",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
@@ -269,7 +264,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="textaction_v03",
+        default="sd-model-finetuned",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -338,14 +333,14 @@ def parse_args():
     parser.add_argument(
         "--lr_scheduler",
         type=str,
-        default="constant",
+        default="cosine",
         help=(
             'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
             ' "constant", "constant_with_warmup"]'
         ),
     )
     parser.add_argument(
-        "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
+        "--lr_warmup_steps", type=int, default=10, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument(
         "--snr_gamma",
@@ -470,11 +465,14 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="textaction_v14_s192",
+        default="t2i-ft-s192",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
         ),
+    )
+    parser.add_argument(
+        "--drop_text", action="store_true", help="Whether or not drop text caption."
     )
 
     args = parser.parse_args()
@@ -493,35 +491,10 @@ def parse_args():
     return args
 
 
-def get_add_time_ids(
-        batch_size,
-        fps=2,
-        motion_bucket_id=127,
-        noise_aug_strength=0.02,
-        num_videos_per_prompt=1,
-        do_classifier_free_guidance=False,
-    ):
-        add_time_ids = [fps, motion_bucket_id, noise_aug_strength]
-
-        passed_add_embed_dim = 256 * len(add_time_ids)
-        expected_add_embed_dim = 768
-
-        if expected_add_embed_dim != passed_add_embed_dim:
-            raise ValueError(
-                f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
-            )
-
-        add_time_ids = torch.tensor([add_time_ids])
-        add_time_ids = add_time_ids.repeat(batch_size * num_videos_per_prompt, 1)
-
-        if do_classifier_free_guidance:
-            add_time_ids = torch.cat([add_time_ids, add_time_ids])
-
-        return add_time_ids
-
-
 def main():
     args = parse_args()
+
+    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
@@ -532,9 +505,6 @@ def main():
                 " use `--variant=non_ema` instead."
             ),
         )
-    
-    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels', args.output_dir)
-
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
@@ -608,62 +578,22 @@ def main():
         vae = AutoencoderKL.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
         )
-    
-    # for video
-    # load model manually to adapt to new state_dicts
-    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4)
 
-    unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
-    unet_files = os.listdir(unet_dir)
-    if 'diffusion_pytorch_model.safetensors' in unet_files:
-        tensors = {}
-        with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
-            for k in f.keys():
-                tensors[k] = f.get_tensor(k)
-    else:
-        # diffusion_pytorch_model.bin
-        tensors = torch.load(os.path.join(unet_dir, 'diffusion_pytorch_model.bin'), map_location=torch.device('cpu'))
-
-    new_state_dicts = OrderedDict()
-    for k, v in tensors.items():
-        if 'mid_block' in k and 'resnets' in k:
-            strs = k.split('.')
-            new_k = '.'.join(strs[:3]) + '.spatial_res_block.' + '.'.join(strs[-2:])
-            new_state_dicts[new_k] = v
-        elif 'resnets' in k and 'temporal_res_blocks' not in k:
-            strs = k.split('.')
-            new_k = '.'.join(strs[:4]) + '.spatial_res_block.' + '.'.join(strs[-2:])
-            new_state_dicts[new_k] = v
-        else:
-            new_state_dicts[k] = v
-
-    miss_keys, ignore_keys = unet.load_state_dict(new_state_dicts, strict=False)
-    if accelerator.is_main_process:
-        print('miss_keys: ', miss_keys)
-        print('ignore_keys: ', ignore_keys)
-
-    optimize_param = []
-
-    # NOTE: update missing weights
-    for name, param in unet.named_parameters():
-        param.requires_grad = False
-        if name in miss_keys:
-            param.requires_grad = True
-            optimize_param.append(param)
+    unet = UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant='fp16'
+        )
 
     # Freeze vae and text_encoder and set unet to trainable
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
-    unet.config.sample_size = 96 # fixed num
+    unet.train()
 
-
-    params = sum(p.numel() for p in unet.parameters() if p.requires_grad)
-    params_in_million = params / 1e6  # M
-    if accelerator.is_main_process:
-        print(f"updated parameters: {params_in_million} M")
-
-    # video does not use ema here
-
+    # Create EMA for the unet.
+    if args.use_ema:
+        ema_unet = UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant='fp16'
+        )
+        ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -683,6 +613,9 @@ def main():
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
         def save_model_hook(models, weights, output_dir):
             if accelerator.is_main_process:
+                if args.use_ema:
+                    ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
+
                 for i, model in enumerate(models):
                     model.save_pretrained(os.path.join(output_dir, "unet"))
 
@@ -690,41 +623,20 @@ def main():
                     weights.pop()
 
         def load_model_hook(models, input_dir):
+            if args.use_ema:
+                load_model = EMAModel.from_pretrained(os.path.join(input_dir, "unet_ema"), UNet2DConditionModel)
+                ema_unet.load_state_dict(load_model.state_dict())
+                ema_unet.to(accelerator.device)
+                del load_model
+
             for i in range(len(models)):
                 # pop models so that they are not loaded again
                 model = models.pop()
 
                 # load diffusers style into model
-                # load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
-                # model.register_to_config(**load_model.config)
-                load_model = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4)
+                load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+                model.register_to_config(**load_model.config)
 
-                unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
-                unet_files = os.listdir(unet_dir)
-                if 'diffusion_pytorch_model.safetensors' in unet_files:
-                    inner_tensors = {}
-                    with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
-                        for k in f.keys():
-                            inner_tensors[k] = f.get_tensor(k)
-                else:
-                    # diffusion_pytorch_model.bin
-                    inner_tensors = torch.load(os.path.join(unet_dir, 'diffusion_pytorch_model.bin'), map_location=torch.device('cpu'))
-
-                inner_new_state_dicts = OrderedDict()
-                for k, v in inner_tensors.items():
-                    if 'mid_block' in k and 'resnets' in k:
-                        strs = k.split('.')
-                        new_k = '.'.join(strs[:3]) + '.spatial_res_block.' + '.'.join(strs[-2:])
-                        inner_new_state_dicts[new_k] = v
-                    elif 'resnets' in k and 'temporal_transformer_blocks' not in k:
-                        strs = k.split('.')
-                        new_k = '.'.join(strs[:4]) + '.spatial_res_block.' + '.'.join(strs[-2:])
-                        inner_new_state_dicts[new_k] = v
-                    else:
-                        inner_new_state_dicts[k] = v
-
-                miss_keys, ignore_keys = load_model.load_state_dict(inner_new_state_dicts, strict=False)
-                
                 model.load_state_dict(load_model.state_dict())
                 del load_model
 
@@ -757,10 +669,8 @@ def main():
     else:
         optimizer_cls = torch.optim.AdamW
 
-    #TODO train partial parameters
-
     optimizer = optimizer_cls(
-        optimize_param,
+        unet.parameters(),
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
@@ -768,7 +678,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
+        train_dataset = keyframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
 
 
     # DataLoaders creation:
@@ -798,6 +708,9 @@ def main():
         unet, optimizer, train_dataloader, lr_scheduler
     )
 
+    if args.use_ema:
+        ema_unet.to(accelerator.device)
+
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -811,7 +724,6 @@ def main():
     # Move text_encode and vae to gpu and cast to weight_dtype
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
-    unet.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -881,33 +793,8 @@ def main():
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
                 # Convert images to latent space
-
-                video_frames = batch["label_imgs"].to(weight_dtype)
-                bs, l, _, _, _ = video_frames.size()
-                video_frames = rearrange(video_frames, 'b l c h w -> (b l) c h w', b=bs, l=l)
-
-                steer_scale = 10.
-                steer_offset = 90.
-                speed_scale = 10.
-                speed_offset = 2.
-
-                steers = batch['steer'].to(weight_dtype) * steer_scale + steer_offset
-                speeds = batch['speed'].to(weight_dtype) * speed_scale + speed_offset
-                steers = steers.view(-1, 1)
-                speeds = speeds.view(-1, 1)
-
-                action = torch.cat([steers, speeds], dim=-1)
-                # seperately pass two embeding layers in U-Net
-
-                latents = vae.encode(video_frames).latent_dist.sample() # receive bl, c, h, w
+                latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
-
-                latents = rearrange(latents, '(b l) c h w -> b l c h w', b=bs, l=l)
-
-                # print('encoded latents shape: ',latents.shape) # (b, l, 4, h, w)
-
-                # image context
-                image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -918,8 +805,8 @@ def main():
                     )
                 if args.input_perturbation:
                     new_noise = noise + args.input_perturbation * torch.randn_like(noise)
-                bsz = latents.shape[0] # only batch size
-                # Sample a random timestep for a video
+                bsz = latents.shape[0]
+                # Sample a random timestep for each image
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
                 timesteps = timesteps.long()
 
@@ -931,7 +818,19 @@ def main():
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+
+                # add drop text prob
+                if args.drop_text:
+                    text_drop_prob = 0.1
+                    prob = torch.rand(1).item()
+                    if prob < text_drop_prob:
+                        text_input = torch.tensor([[49406]+[49407]*76]).repeat(bsz,1).to(latents.device)
+                    else:
+                        text_input = batch["input_ids"]
+                else:
+                    text_input = batch["input_ids"]
+
+                encoder_hidden_states = text_encoder(text_input)[0]
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
@@ -945,11 +844,8 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                # we skip added_time_ids at unet_action_v14 config
-                added_time_ids = None
-
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context, action=action).sample
+                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -983,6 +879,8 @@ def main():
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
+                if args.use_ema:
+                    ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
@@ -1022,6 +920,10 @@ def main():
 
         if accelerator.is_main_process:
             if args.validation_prompts is not None and epoch % args.validation_epochs == 0:
+                if args.use_ema:
+                    # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
+                    ema_unet.store(unet.parameters())
+                    ema_unet.copy_to(unet.parameters())
                 log_validation(
                     vae,
                     text_encoder,
@@ -1032,36 +934,27 @@ def main():
                     weight_dtype,
                     global_step,
                 )
+                if args.use_ema:
+                    # Switch back to the original UNet parameters.
+                    ema_unet.restore(unet.parameters())
 
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        unwrapped_unet = accelerator.unwrap_model(unet)
+        unet = accelerator.unwrap_model(unet)
+        if args.use_ema:
+            ema_unet.copy_to(unet.parameters())
 
-        #TODO save UNet
-        # save for ZeRO-3 offloading
-        # unwrapped_unet.save_pretrained(
-        #     os.path.join(args.output_dir, 'unet'),
-        #     is_main_process=accelerator.is_main_process,
-        #     save_function=accelerator.save,
-        #     state_dict=accelerator.get_state_dict(unet),
-        # )
-
-        # from safetensors.torch import save_file
-        #TODO ZeRO-2 saving
-        unwrapped_unet.save_pretrained(os.path.join(args.output_dir, 'unet'))
-
-        # pipeline = StableDiffusionPipeline.from_pretrained(
-        #     args.pretrained_model_name_or_path,
-        #     text_encoder=text_encoder,
-        #     vae=vae,
-        #     unet=unet,
-        #     revision=args.revision,
-        #     variant=args.variant,
-        #     safety_checker=None,
-        # )
-        # pipeline.to(torch.float16)
-        # pipeline.save_pretrained(args.output_dir)
+        pipeline = StableDiffusionPipeline.from_pretrained(
+            args.pretrained_model_name_or_path,
+            text_encoder=text_encoder,
+            vae=vae,
+            unet=unet,
+            revision=args.revision,
+            variant=args.variant,
+            safety_checker=None,
+        )
+        pipeline.save_pretrained(args.output_dir, safe_serialization=False)
 
         # Run a final round of inference.
         images = []

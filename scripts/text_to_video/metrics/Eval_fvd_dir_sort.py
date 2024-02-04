@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/mnt/cache/wangxiaodong/SVD-Sense/src')
+sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer
@@ -32,9 +32,6 @@ from nuscenes.utils.splits import create_splits_scenes
 
 from common import image2arr, pil2arr, mp4toarr, image2pil, json2data
 
-from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
-from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
-
 from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v1 import ActionVideoDiffusionPipeline
 from diffusers.utils import export_to_video
 
@@ -47,7 +44,7 @@ import json
 
 def main(
         gt_dir='/ssd_datasets/wxiaodong/nuscene_val/val_150_video/',
-        tgt_dir='/ssd_datasets/wxiaodong/nuscene_val/FVD-center-8/drive-video-s256-v01-ep100',
+        tgt_dir='/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first-15/video-v11-ep200-s196',
         version = None,
         split='val',
         num_frames=8,
@@ -62,8 +59,20 @@ def main(
     print('loaded i3d_model')
 
     # read real video
-    meta_data = json2data('/home/wxd/data/nuscene/samples_group_sort_val.json')
-    files_dir = '/home/wxd/data/nuscene/val_group'
+    meta_data = json2data('/mnt/lustrenew/wangxiaodong/data/nuscene/samples_group_sort_val.json')
+    files_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/val_group'
+
+    # read syn videos
+    syn_videos = []
+    # video_files = os.listdir(tgt_dir)
+    for item in tqdm(meta_data):
+        sce = item['scene']
+        samples = item['samples']
+        video_path = samples[0].split('.')[0] + '.mp4'
+        video_arr = mp4toarr(os.path.join(tgt_dir, sce, video_path))
+        syn_videos.append(video_arr[:eval_frames]) # only load eval_frames
+    syn_videos = np.array(syn_videos)
+    print(f'syn shape {syn_videos.shape}')
 
     real_videos = []
     for item in tqdm(meta_data):
@@ -79,17 +88,6 @@ def main(
     # N T H W C
     real_videos = np.array(real_videos)
     print(f'real shape {real_videos.shape}')
-
-    # read syn videos
-    syn_videos = []
-    video_files = os.listdir(tgt_dir)
-    for video_path in tqdm(video_files):
-        if video_path.split('.')[-1] != 'mp4':
-            continue
-        video_arr = mp4toarr(os.path.join(tgt_dir, video_path))
-        syn_videos.append(video_arr[:eval_frames]) # only load eval_frames
-    syn_videos = np.array(syn_videos)
-    print(f'syn shape {syn_videos.shape}')
 
     fvd_score = compute_fvd(real_videos, syn_videos, i3d_model, i3d_device)
     

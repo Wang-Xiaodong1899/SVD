@@ -678,7 +678,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = keyframes(split='train', args=args, tokenizer=tokenizer)
+        train_dataset = keyframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 512))
 
 
     # DataLoaders creation:

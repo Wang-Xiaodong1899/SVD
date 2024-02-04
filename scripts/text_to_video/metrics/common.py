@@ -1,6 +1,7 @@
 import numpy as np
 from PIL import Image
 import cv2
+import json
 
 def image2pil(filename):
     return Image.open(filename).convert('RGB')
@@ -28,3 +29,12 @@ def mp4toarr(file_path):
         frames.append(frame_uint8)
     cap.release()
     return np.array(frames)
+
+def json2data(file_path):
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    return data
+
+def data2json(data, file_path):
+    with open(file_path, 'w') as f:
+        json.dump(data, f)

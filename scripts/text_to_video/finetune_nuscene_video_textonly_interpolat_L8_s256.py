@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 # coding=utf-8
 
-# NOTE V14
-# V1x denote we insert image context to each blocks
-# Vx4 denote we scale the action embedding, cross attend the temporal layers
-# We also delete add_time_ids
+# NOTE
+# This Version
+# video frames = 12
+# img size: 384x192
+# v01: insert context into first resnet layer of Down Blocks
 
 import argparse
 import logging
@@ -38,7 +39,7 @@ sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
-from diffusers.models.unet_action_v14 import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action_interpolat import UNetSpatioTemporalConditionModel_Action
 
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
@@ -198,7 +199,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/ssd_datasets/wxiaodong/ckpt/drive-s256-ep40",
+        default="/home/wxd/video-generation/diffusers/examples/text_to_image/drive-s256-ep40",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
@@ -269,7 +270,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="textaction_v03",
+        default="sd-model-finetuned",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -338,14 +339,14 @@ def parse_args():
     parser.add_argument(
         "--lr_scheduler",
         type=str,
-        default="constant",
+        default="cosine",
         help=(
             'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
             ' "constant", "constant_with_warmup"]'
         ),
     )
     parser.add_argument(
-        "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
+        "--lr_warmup_steps", type=int, default=20, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument(
         "--snr_gamma",
@@ -470,7 +471,7 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="textaction_v14_s192",
+        default="t2v_textonly_interpolat_s256_L8_fix",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -523,6 +524,8 @@ def get_add_time_ids(
 def main():
     args = parse_args()
 
+    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels', args.output_dir)
+
     if args.non_ema_revision is not None:
         deprecate(
             "non_ema_revision!=None",
@@ -532,9 +535,6 @@ def main():
                 " use `--variant=non_ema` instead."
             ),
         )
-    
-    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels', args.output_dir)
-
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
@@ -639,12 +639,13 @@ def main():
 
     miss_keys, ignore_keys = unet.load_state_dict(new_state_dicts, strict=False)
     if accelerator.is_main_process:
+        pass
         print('miss_keys: ', miss_keys)
         print('ignore_keys: ', ignore_keys)
 
     optimize_param = []
 
-    # NOTE: update missing weights
+    # update only missing weights
     for name, param in unet.named_parameters():
         param.requires_grad = False
         if name in miss_keys:
@@ -698,7 +699,10 @@ def main():
                 # load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
                 # model.register_to_config(**load_model.config)
                 load_model = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4)
-
+                # inner_tensors = {}
+                # with safe_open("/home/wxd/video-generation/diffusers/examples/text_to_image/sd-drive-ep40/unet/diffusion_pytorch_model.safetensors", framework="pt", device='cpu') as f:
+                #     for k in f.keys():
+                #         inner_tensors[k] = f.get_tensor(k)
                 unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
                 unet_files = os.listdir(unet_dir)
                 if 'diffusion_pytorch_model.safetensors' in unet_files:
@@ -716,7 +720,7 @@ def main():
                         strs = k.split('.')
                         new_k = '.'.join(strs[:3]) + '.spatial_res_block.' + '.'.join(strs[-2:])
                         inner_new_state_dicts[new_k] = v
-                    elif 'resnets' in k and 'temporal_transformer_blocks' not in k:
+                    elif 'resnets' in k and 'temporal_res_blocks' not in k:
                         strs = k.split('.')
                         new_k = '.'.join(strs[:4]) + '.spatial_res_block.' + '.'.join(strs[-2:])
                         inner_new_state_dicts[new_k] = v
@@ -768,7 +772,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
+        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, max_video_len=8, img_size=(256, 512))
 
 
     # DataLoaders creation:
@@ -880,24 +884,11 @@ def main():
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
-                # Convert images to latent space
 
                 video_frames = batch["label_imgs"].to(weight_dtype)
                 bs, l, _, _, _ = video_frames.size()
                 video_frames = rearrange(video_frames, 'b l c h w -> (b l) c h w', b=bs, l=l)
 
-                steer_scale = 10.
-                steer_offset = 90.
-                speed_scale = 10.
-                speed_offset = 2.
-
-                steers = batch['steer'].to(weight_dtype) * steer_scale + steer_offset
-                speeds = batch['speed'].to(weight_dtype) * speed_scale + speed_offset
-                steers = steers.view(-1, 1)
-                speeds = speeds.view(-1, 1)
-
-                action = torch.cat([steers, speeds], dim=-1)
-                # seperately pass two embeding layers in U-Net
 
                 latents = vae.encode(video_frames).latent_dist.sample() # receive bl, c, h, w
                 latents = latents * vae.config.scaling_factor
@@ -907,7 +898,9 @@ def main():
                 # print('encoded latents shape: ',latents.shape) # (b, l, 4, h, w)
 
                 # image context
-                image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
+                image_first = latents[:, 0] # get first frame latents # (b, 4, h, w)
+                image_tail = latents[:, -1]
+                image_context = torch.cat([image_first, image_tail], dim=0)
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -945,11 +938,10 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                # we skip added_time_ids at unet_action_v14 config
-                added_time_ids = None
+                added_time_ids = get_add_time_ids(bsz)
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context, action=action).sample
+                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context).sample
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")

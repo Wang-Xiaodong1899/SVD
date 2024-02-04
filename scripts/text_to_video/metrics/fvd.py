@@ -10,7 +10,7 @@ import os
 
 from sklearn.metrics.pairwise import polynomial_kernel
 
-MAX_BATCH = 16
+MAX_BATCH = 1
 FVD_SAMPLE_SIZE = 2048
 TARGET_RESOLUTION = (224, 224)
 
