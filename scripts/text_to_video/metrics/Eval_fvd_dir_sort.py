@@ -54,6 +54,8 @@ def main(
 
     if version is None:
         version = os.path.basename(tgt_dir)+f'_F{num_frames}'
+    
+    print(f'eval videos at {tgt_dir}')
     # load fvd model
     i3d_model = load_fvd_model(i3d_device)
     print('loaded i3d_model')

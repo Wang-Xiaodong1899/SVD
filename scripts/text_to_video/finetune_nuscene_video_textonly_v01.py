@@ -40,7 +40,7 @@ sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
-from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
 
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
@@ -937,7 +937,7 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                added_time_ids = None
+                added_time_ids = get_add_time_ids(bsz)
 
                 # Predict the noise residual and compute loss
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context).sample

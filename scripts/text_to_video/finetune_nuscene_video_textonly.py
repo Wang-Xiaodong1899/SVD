@@ -41,7 +41,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/home/wxd/video-generation/diffusers/src')
+sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
@@ -759,7 +759,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer)
+        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
 
 
     # DataLoaders creation:

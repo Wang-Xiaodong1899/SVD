@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/wxd/video-generation/diffusers/src')
+sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer
@@ -32,7 +32,8 @@ from nuscenes.utils.splits import create_splits_scenes
 
 from common import image2arr, pil2arr, mp4toarr, image2pil, json2data
 
-from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
+# from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
 
 from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v1 import ActionVideoDiffusionPipeline
