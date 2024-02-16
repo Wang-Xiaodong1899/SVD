@@ -3,9 +3,10 @@
 
 # NOTE
 # This Version
-# video frames = 12
+# video frames = 8
 # img size: 384x192
-# v01: insert context into first resnet layer of Down Blocks
+# v11: insert context into first resnet layer of (Down, Mid, Up blocks)
+# no add_time_ids
 
 import argparse
 import logging
@@ -39,7 +40,7 @@ sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
-from diffusers.models.unet_action_interpolat import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
 
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
@@ -471,7 +472,7 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2v_interpolat_s256_L6",
+        default="t2v_v01_s192",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -778,7 +779,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, max_video_len=6, img_size=(256, 512))
+        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
 
 
     # DataLoaders creation:
@@ -906,19 +907,17 @@ def main():
 
                 # print('encoded latents shape: ',latents.shape) # (b, l, 4, h, w)
 
+                # image context
                 if args.drop_context > 0:
                     prob = torch.rand(1).item()
                     if prob < args.drop_context:
-                        image_context = torch.zeros((2*bs, latents.shape[2], latents.shape[3], latents.shape[4])).to(latents.dtype).to(latents.device)
+                        image_context = torch.zeros_like(latents[:, 0])
                     else:
-                        image_first = latents[:, 0] # get first frame latents # (b, 4, h, w)
-                        image_tail = latents[:, -1]
-                        image_context = torch.cat([image_first, image_tail], dim=0)
+                        image_context = latents[:, 0]
                 else:
-                    image_first = latents[:, 0] # get first frame latents # (b, 4, h, w)
-                    image_tail = latents[:, -1]
-                    image_context = torch.cat([image_first, image_tail], dim=0)
+                    image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
 
+                
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -978,7 +977,7 @@ def main():
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
                     loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
                     loss = loss.mean()
-                
+
                 # b l c h w
                 # loss for reference frame
                 loss_1 = F.mse_loss(model_pred.float()[:, 0], target.float()[:, 0], reduction="mean")
@@ -986,17 +985,18 @@ def main():
                 loss_last = F.mse_loss(model_pred.float()[:, -1], target.float()[:, -1], reduction="mean")
 
 
+
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
+                # gather other loss
                 avg_loss_1 = accelerator.gather(loss_1.repeat(args.train_batch_size)).mean()
                 train_loss_1 += avg_loss_1.item() / args.gradient_accumulation_steps
                 avg_loss_2 = accelerator.gather(loss_2.repeat(args.train_batch_size)).mean()
                 train_loss_2 += avg_loss_2.item() / args.gradient_accumulation_steps
                 avg_loss_last = accelerator.gather(loss_last.repeat(args.train_batch_size)).mean()
                 train_loss_last += avg_loss_last.item() / args.gradient_accumulation_steps
-
 
                 # Backpropagate
                 accelerator.backward(loss)
@@ -1018,6 +1018,7 @@ def main():
                 train_loss_1 = 0.0
                 train_loss_2 = 0.0
                 train_loss_last = 0.0
+
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:

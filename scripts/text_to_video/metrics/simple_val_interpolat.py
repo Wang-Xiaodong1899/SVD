@@ -27,7 +27,9 @@ from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels/video-v11-ep200-s196', device='cuda:0'):
+image_size = (256, 512)
+
+def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/interpolat-ep200-s256-L6', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
                 '/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="text_encoder"
     )
@@ -71,10 +73,10 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
     return generated_caption[0]
 
 def main(
-    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels/video-interpolat-ep200-s192-L12',
-    num_frames = 12,
+    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/interpolat-ep200-s256-L6',
+    num_frames = 6,
     root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-inp',
-    train_frames = 12,
+    train_frames = 6,
     device='cuda:0'
 ):
     pipeline = load_models(pretrained_model_name_or_path, device)
@@ -117,7 +119,7 @@ def main(
         image_path_end = os.path.join(files_dir, sce, file)
         end_image = Image.open(image_path_end)
 
-        video = pipeline(first_image, end_image, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
+        video = pipeline(first_image, end_image, num_frames=train_frames, prompt=prompt, action=None, height=image_size[0], width=image_size[1]).frames[0]
         print(f'len of first {len(video)}')
         # 8 + 7 -> 15 frames
         # video[0] = image.convert('RGB').resize((384, 192))
