@@ -91,8 +91,8 @@ def main(
         for (idx, p) in enumerate(path):
             ims = images[idx]
             name = os.path.basename(p)
-            ims.save(os.path.join(save_dir, version, name))
-    
+            ims.save(os.path.join(save_dir, version, name.split('.')[0]+'-1.jpg'))
+    print('Duplicate each images!')
     print('Save Done!')
 
 if __name__ == '__main__':

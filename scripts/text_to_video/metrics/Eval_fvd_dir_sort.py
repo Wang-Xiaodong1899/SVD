@@ -69,10 +69,11 @@ def main(
     # video_files = os.listdir(tgt_dir)
     for item in tqdm(meta_data):
         sce = item['scene']
-        samples = item['samples']
-        video_path = samples[0].split('.')[0] + '.mp4'
-        video_arr = mp4toarr(os.path.join(tgt_dir, sce, video_path))
-        syn_videos.append(video_arr[:eval_frames]) # only load eval_frames
+        files = os.listdir(os.path.join(tgt_dir, sce))
+        for file in files:
+            if file.split('.')[-1] == 'mp4':
+                video_arr = mp4toarr(os.path.join(tgt_dir, sce, file))
+                syn_videos.append(video_arr[:eval_frames]) # only load eval_frames
     syn_videos = np.array(syn_videos)
     print(f'syn shape {syn_videos.shape}')
 

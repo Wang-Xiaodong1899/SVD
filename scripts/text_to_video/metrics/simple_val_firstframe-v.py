@@ -21,15 +21,14 @@ from diffusers.utils import export_to_video
 
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
 # from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
-from diffusers.models.unet_action_interpolat import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
-from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_interpolat import ActionVideoDiffusionPipeline
+from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v1_v import ActionVideoDiffusionPipeline
 # fix fps=3
+
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-image_size = (256, 512)
-
-def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/interpolat-ep200-s256-L6', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/video-v01-v-ep100-s192-5e-5', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
                 '/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="text_encoder"
     )
@@ -73,10 +72,10 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
     return generated_caption[0]
 
 def main(
-    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/interpolat-ep200-s256-L6',
-    num_frames = 6,
-    root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-inp',
-    train_frames = 6,
+    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/video-v01-v-ep100-s192-5e-5',
+    num_frames = 15,
+    root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first',
+    train_frames = 8,
     device='cuda:0'
 ):
     pipeline = load_models(pretrained_model_name_or_path, device)
@@ -108,30 +107,35 @@ def main(
         else:
             continue
         image_path = os.path.join(files_dir, sce, file)
-        first_image = Image.open(image_path)
-        prompt = generate_caption(first_image, git_processor_large, git_model_large)
+        image = Image.open(image_path)
+        prompt = generate_caption(image, git_processor_large, git_model_large)
 
-        file = samples[train_frames-1] # 12th frame
-        if file.split('.')[-1] == 'jpg' or file.split('.')[-1] == 'png':
-            pass
-        else:
-            continue
-        image_path_end = os.path.join(files_dir, sce, file)
-        end_image = Image.open(image_path_end)
-
-        video = pipeline(first_image, end_image, num_frames=train_frames, prompt=prompt, action=None, height=image_size[0], width=image_size[1]).frames[0]
+        video = pipeline(image, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
         print(f'len of first {len(video)}')
         # 8 + 7 -> 15 frames
         # video[0] = image.convert('RGB').resize((384, 192))
+        if num_frames>train_frames:
+            last_frame = video[-1]
+            prompt = generate_caption(last_frame, git_processor_large, git_model_large)
+            video_2 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
+            print(f'len of second {len(video)}')
+            video = video + video_2[1:]
+            print(f'len of final video {len(video)}')
+        
+        if num_frames> 2*train_frames:
+            last_frame = video[-1]
+            prompt = generate_caption(last_frame, git_processor_large, git_model_large)
+            video_3 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
+            print(f'len of third {len(video)}')
+            video = video + video_3[1:]
+            print(f'len of final video {len(video)}')
 
         name = os.path.basename(image_path).split('.')[0]
 
         os.makedirs(os.path.join(root_dir, version, sce), exist_ok=True)
 
-        first_image.save(os.path.join(root_dir, version, sce, 'first.jpg'))
-        end_image.save(os.path.join(root_dir, version, sce, 'end.jpg'))
-
-        export_to_video(video, os.path.join(root_dir, version, sce, f'{name}.mp4'), fps=6)
+        export_to_video(video, os.path.join(root_dir, version, sce, f'{name}-1.mp4'), fps=6)
+        print(f'save to duplicate name')
 
     print('inference done!')
 

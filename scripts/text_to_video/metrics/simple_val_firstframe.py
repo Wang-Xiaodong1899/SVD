@@ -24,10 +24,11 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPV
 from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v1 import ActionVideoDiffusionPipeline
+# fix fps=3
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels/video-v11-ep200-s196', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/im192-video-v01-ep100-s192-5e-5', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
                 '/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="text_encoder"
     )
@@ -71,7 +72,7 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
     return generated_caption[0]
 
 def main(
-    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels/video-v11-ep200-s196',
+    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/im192-video-v01-ep100-s192-5e-5',
     num_frames = 15,
     root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first',
     train_frames = 8,
@@ -133,7 +134,8 @@ def main(
 
         os.makedirs(os.path.join(root_dir, version, sce), exist_ok=True)
 
-        export_to_video(video, os.path.join(root_dir, version, sce, f'{name}.mp4'), fps=6)
+        export_to_video(video, os.path.join(root_dir, version, sce, f'{name}-1.mp4'), fps=6)
+        print(f'save to duplicate name')
 
     print('inference done!')
 

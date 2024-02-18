@@ -22,13 +22,11 @@ import torch
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
 
 from ...image_processor import VaeImageProcessor
-from diffusers.models.unet_action_interpolat import UNetSpatioTemporalConditionModel_Action
-from ...models import AutoencoderKL
+from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
 from ...schedulers import KarrasDiffusionSchedulers
 from ...utils import BaseOutput, logging
 from ...utils.torch_utils import randn_tensor
 from ..pipeline_utils import DiffusionPipeline
-from einops import rearrange, repeat
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -314,14 +312,13 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
     def __call__(
         self,
         image: Union[PIL.Image.Image, List[PIL.Image.Image], torch.FloatTensor],
-        end_image: Union[PIL.Image.Image, List[PIL.Image.Image], torch.FloatTensor],
         height: int = 576,
         width: int = 1024,
         num_frames: Optional[int] = None, # follow unet.config
         num_inference_steps: int = 25,
         min_guidance_scale: float = 1.0,
         max_guidance_scale: float = 1.0, # no guidance
-        fps: int = 3, # 3-2=1
+        fps: int = 3, # 3-1=2
         motion_bucket_id: int = 127,
         noise_aug_strength: int = 0.02,
         decode_chunk_size: Optional[int] = None,
@@ -468,7 +465,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
 
         # 4. Encode input image using VAE
         image = self.image_processor.preprocess(image, height=height, width=width)
-        end_image = self.image_processor.preprocess(end_image, height=height, width=width)
+        noise = randn_tensor(image.shape, generator=generator, device=image.device, dtype=image.dtype)
 
         # no noise to image
         print('no noise add to image')
@@ -480,16 +477,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         image_latents = self._encode_vae_image(image, device, num_videos_per_prompt, do_classifier_free_guidance)
         image_latents = image_latents.to(prompt_embeds.dtype)
 
-        end_image_latents = self._encode_vae_image(end_image, device, num_videos_per_prompt, do_classifier_free_guidance)
-        end_image_latents = end_image_latents.to(prompt_embeds.dtype)
-
-        # concat
-        image_first = image_latents[:, None]
-        image_last = end_image_latents[:, None]
-        image_latents = torch.cat([image_first, image_last], dim=1)
-        image_latents = rearrange(image_latents, 'b l c h w -> (b l) c h w')
-
-        # need scaling
+        # TODO
         image_latents = image_latents * self.vae.config.scaling_factor
 
         # cast back to fp16 if needed
@@ -500,18 +488,6 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         # image_latents [batch, channels, height, width] ->[batch, num_frames, channels, height, width]
         # image_latents = image_latents.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
         # no unsqueeze and repeat here for action 
-
-        # 5. Get Added Time IDs
-        added_time_ids = self._get_add_time_ids(
-            fps,
-            motion_bucket_id,
-            noise_aug_strength,
-            prompt_embeds.dtype,
-            batch_size,
-            num_videos_per_prompt,
-            do_classifier_free_guidance,
-        )
-        added_time_ids = added_time_ids.to(device)
 
         # 4. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
@@ -558,7 +534,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
                     latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds, # use text prompt here
-                    added_time_ids=added_time_ids,
+                    added_time_ids=None,
                     return_dict=False,
                     image_context=image_latents,
                     action=action,

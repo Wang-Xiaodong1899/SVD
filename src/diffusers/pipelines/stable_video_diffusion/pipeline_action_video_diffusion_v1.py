@@ -318,7 +318,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         num_inference_steps: int = 25,
         min_guidance_scale: float = 1.0,
         max_guidance_scale: float = 1.0, # no guidance
-        fps: int = 7,
+        fps: int = 3, # 3-1=2
         motion_bucket_id: int = 127,
         noise_aug_strength: int = 0.02,
         decode_chunk_size: Optional[int] = None,
