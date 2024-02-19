@@ -76,7 +76,8 @@ def main(
     num_frames = 15,
     root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first',
     train_frames = 8,
-    device='cuda:0'
+    device='cuda',
+    roll_out= 1
 ):
     pipeline = load_models(pretrained_model_name_or_path, device)
 
@@ -111,31 +112,23 @@ def main(
         prompt = generate_caption(image, git_processor_large, git_model_large)
 
         video = pipeline(image, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
-        print(f'len of first {len(video)}')
+        # print(f'len of first {len(video)}')
         # 8 + 7 -> 15 frames
         # video[0] = image.convert('RGB').resize((384, 192))
-        if num_frames>train_frames:
+        for t in range(roll_out):
             last_frame = video[-1]
             prompt = generate_caption(last_frame, git_processor_large, git_model_large)
             video_2 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
-            print(f'len of second {len(video)}')
             video = video + video_2[1:]
-            print(f'len of final video {len(video)}')
         
-        if num_frames> 2*train_frames:
-            last_frame = video[-1]
-            prompt = generate_caption(last_frame, git_processor_large, git_model_large)
-            video_3 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
-            print(f'len of third {len(video)}')
-            video = video + video_3[1:]
-            print(f'len of final video {len(video)}')
+        print(f'len of final video {len(video)}')
 
         name = os.path.basename(image_path).split('.')[0]
 
         os.makedirs(os.path.join(root_dir, version, sce), exist_ok=True)
 
-        export_to_video(video, os.path.join(root_dir, version, sce, f'{name}-1.mp4'), fps=6)
-        print(f'save to duplicate name')
+        export_to_video(video, os.path.join(root_dir, version, sce, f'{name}.mp4'), fps=6)
+        # print(f'save to duplicate name')
 
     print('inference done!')
 

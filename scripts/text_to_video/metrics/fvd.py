@@ -36,6 +36,7 @@ def load_fvd_model(device):
     current_dir = os.path.dirname(os.path.abspath(__file__))
     i3d_path = os.path.join(current_dir, 'i3d_pretrained_400.pt')
     i3d.load_state_dict(torch.load(i3d_path, map_location=device))
+    print(f'loaded i3d from {i3d_path}')
     i3d.eval()
     return i3d
 
@@ -99,6 +100,42 @@ def frechet_distance(x1, x2):
     fd = trace + mean
     return fd
 
+#NOTE new evulation
+import scipy
+
+def calculate_fid(
+    sample_mean: np.ndarray, sample_cov: np.ndarray, real_mean: np.ndarray,
+    real_cov: np.ndarray, eps: float = 1e-6
+):
+    cov_sqrt, _ = scipy.linalg.sqrtm(sample_cov @ real_cov, disp=False)
+    if not np.isfinite(cov_sqrt).all():
+        print('product of cov matrices is singular')
+        offset = np.eye(sample_cov.shape[0]) * eps
+        cov_sqrt = scipy.linalg.sqrtm(
+            (sample_cov + offset) @ (real_cov + offset))
+
+    if np.iscomplexobj(cov_sqrt):
+        if not np.allclose(np.diagonal(cov_sqrt).imag, 0, atol=1e-3):
+            m = np.max(np.abs(cov_sqrt.imag))
+            raise ValueError(f'Imaginary component {m}')
+
+        cov_sqrt = cov_sqrt.real
+
+    mean_diff = sample_mean - real_mean
+    mean_norm = mean_diff @ mean_diff
+    trace = np.trace(sample_cov) + np.trace(real_cov) - 2 * np.trace(cov_sqrt)
+    fid = mean_norm + trace
+    return float(fid), float(mean_norm), float(trace)
+
+
+def get_mean_cov_from_feature_list(feature_list):
+    # features = np.concatenate(feature_list)
+    features = feature_list
+    mean = np.mean(features, 0)
+    cov = np.cov(features, rowvar=False)
+    return mean, cov
+
+
 
 def polynomial_mmd(X, Y):
     m = X.shape[0]
@@ -134,3 +171,18 @@ def compute_fvd(real, samples, i3d, device=torch.device('cpu')):
     second_embed = get_logits(i3d, samples, device)
 
     return frechet_distance(first_embed, second_embed)
+
+def compute_fvd_1(real, samples, i3d, device=torch.device('cpu')):
+    real, samples = preprocess(real, (224, 224)), preprocess(samples, (224, 224))
+    first_embed = get_logits(i3d, real, device)
+    second_embed = get_logits(i3d, samples, device)
+
+    real_mean, real_cov = get_mean_cov_from_feature_list(
+        first_embed.cpu().numpy())
+    fake_mean, fake_cov = get_mean_cov_from_feature_list(
+        second_embed.cpu().numpy())
+
+    fid, mean_norm, trace = calculate_fid(
+        fake_mean, fake_cov, real_mean, real_cov)
+    print("FID {}, mean {}, trace {}".format(
+        fid, mean_norm, trace))

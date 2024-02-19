@@ -35,7 +35,7 @@ from common import image2arr, pil2arr, mp4toarr, image2pil, json2data
 from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v1 import ActionVideoDiffusionPipeline
 from diffusers.utils import export_to_video
 
-from fvd import load_fvd_model, compute_fvd
+from fvd import load_fvd_model, compute_fvd, compute_fvd_1
 
 DATAROOT = '/mnt/lustrenew/wangxiaodong/data/nuscene'
 
@@ -92,7 +92,8 @@ def main(
     real_videos = np.array(real_videos)
     print(f'real shape {real_videos.shape}')
 
-    fvd_score = compute_fvd(real_videos, syn_videos, i3d_model, i3d_device)
+    # fvd_score = compute_fvd(real_videos, syn_videos, i3d_model, i3d_device)
+    fvd_score = compute_fvd_1(real_videos, syn_videos, i3d_model, i3d_device)
     
     print('Save Done!')
 
