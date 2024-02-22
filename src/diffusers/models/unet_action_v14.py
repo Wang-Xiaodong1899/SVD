@@ -22,6 +22,9 @@ from einops import rearrange, repeat
 # scale the action to number, and like the motion score, cross attend temporal layers
 # Because we add action embedding with time-embedding.
 # We need add action_cross_dim=1024
+# Two core designs:
+# (1) add action embeddings with time_embedding
+# (2) action tokens solely condition on temporal layers
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -522,6 +525,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         action_embeds = self.action_proj(action.flatten())
         action_embeds = action_embeds.reshape((batch_size*num_frames, -1))
         action_embeds = action_embeds.to(emb.dtype)
+        # print(action_embeds.shape)
         action_emb = self.action_embedding(action_embeds)
         # NOTE
         # # action add after repeat

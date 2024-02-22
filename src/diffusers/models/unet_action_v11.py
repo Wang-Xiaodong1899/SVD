@@ -96,6 +96,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         transformer_layers_per_block: Union[int, Tuple[int], Tuple[Tuple]] = 1,
         num_attention_heads: Union[int, Tuple[int]] = (5, 10, 10, 20),
         num_frames: int = 8,
+        temp_style: str = "text"
     ):
         super().__init__()
 
@@ -209,6 +210,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 cross_attention_dim=cross_attention_dim[i],
                 num_attention_heads=num_attention_heads[i],
                 resnet_act_fn="silu",
+                temp_style=temp_style
             )
             self.down_blocks.append(down_block)
 
@@ -219,6 +221,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
             transformer_layers_per_block=transformer_layers_per_block[-1],
             cross_attention_dim=cross_attention_dim[-1],
             num_attention_heads=num_attention_heads[-1],
+            temp_style=temp_style
         )
 
         # count how many layers upsample the images
@@ -263,7 +266,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                 cross_attention_dim=reversed_cross_attention_dim[i],
                 num_attention_heads=reversed_num_attention_heads[i],
                 resnet_act_fn="silu",
-                is_same_channel=is_same_channel
+                is_same_channel=is_same_channel,
+                temp_style=temp_style
             )
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel
@@ -397,6 +401,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         return_dict: bool = True,
         action: torch.FloatTensor = None,
         image_context: torch.FloatTensor = None,
+        clip_embedding: torch.FloatTensor = None,
     ) -> Union[UNetSpatioTemporalConditionOutput, Tuple]:
         r"""
         The [`UNetSpatioTemporalConditionModel`] forward method.
@@ -462,6 +467,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         emb = emb.repeat_interleave(num_frames, dim=0)
         # encoder_hidden_states: [batch, 1, channels] -> [batch * frames, 1, channels]
         encoder_hidden_states = encoder_hidden_states.repeat_interleave(num_frames, dim=0)
+        if clip_embedding is not None:
+            clip_embedding = clip_embedding.repeat_interleave(num_frames, dim=0)
 
         # 2. pre-process
         sample = self.conv_in(sample)
@@ -493,6 +500,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     image_only_indicator=image_only_indicator,
                     action=action,
                     image_context=context_frames[idx],
+                    clip_embedding=clip_embedding
                 )
             else:
                 # print(f'DOWN No_cross_attention')
@@ -517,6 +525,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
             image_only_indicator=image_only_indicator,
             action=action,
             image_context=context_frames[-1], # smallest feature map
+            clip_embedding=clip_embedding
         )
 
         # resnets lens: 2, 2, 2, 1
@@ -537,7 +546,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     res_hidden_states_tuple=res_samples,
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
-                    image_context = context_frames[-(i+2)]
+                    image_context = context_frames[-(i+2)],
+                    clip_embedding=clip_embedding
                 )
             else:
                 # print(f'UP NO_cross_attention')
@@ -547,7 +557,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
                     image_only_indicator=image_only_indicator,
-                    image_context = context_frames[-(i+2)]
+                    image_context = context_frames[-(i+2)],
                 )
 
         # 6. post-process

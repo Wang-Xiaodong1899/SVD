@@ -223,6 +223,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         out_channels: Optional[int] = None,
         num_layers: int = 1,
         cross_attention_dim: Optional[int] = None,
+        temp_style: str = "text"
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
@@ -277,6 +278,8 @@ class TransformerSpatioTemporalModel(nn.Module):
         self.proj_out = nn.Conv2d(inner_dim, in_channels, kernel_size=1, stride=1, padding=0)
 
         self.gradient_checkpointing = False
+        self.temp_style = temp_style
+        print(f'init temp style: {temp_style}')
 
     def forward(
         self,
@@ -284,6 +287,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         encoder_hidden_states: Optional[torch.Tensor] = None,
         image_only_indicator: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        clip_embedding: Optional[torch.Tensor] = None,
     ):
         """
         Args:
@@ -311,9 +315,20 @@ class TransformerSpatioTemporalModel(nn.Module):
         num_frames = image_only_indicator.shape[-1]
         batch_size = batch_frames // num_frames
 
-        # print(f'encoder_hidden_states shape: {encoder_hidden_states.shape}')
+        # time_context = encoder_hidden_states # Original (B*F, 77, C)
 
-        time_context = encoder_hidden_states # Original (B*F, 77, C)
+        if "image" in self.temp_style:
+            if 'text' in self.temp_style:
+                time_context = torch.cat([clip_embedding, encoder_hidden_states], dim=1)
+            else:
+                if clip_embedding is not None:
+                    time_context = clip_embedding
+                else:
+                    print('want to use clip_embedding, but is None!')
+        else:
+            # pure text
+            time_context = encoder_hidden_states
+        
 
         # time_context_first_timestep = time_context[None, :].reshape(
         #     batch_size, num_frames, -1, time_context.shape[-1]
