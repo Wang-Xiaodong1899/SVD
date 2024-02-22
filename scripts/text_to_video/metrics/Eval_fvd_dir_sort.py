@@ -43,13 +43,15 @@ import json
 
 
 def main(
-        gt_dir='/ssd_datasets/wxiaodong/nuscene_val/val_150_video/',
+        gt_dir='/mnt/lustrenew/wangxiaodong/data/nuscene/val_video',
         tgt_dir='/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first-15/video-v11-ep200-s196',
         version = None,
         split='val',
         num_frames=8,
         i3d_device='cuda:0',
         eval_frames=8,
+        skip_gt = 0,
+        skip_pred = 0
 ):
 
     if version is None:
@@ -80,14 +82,16 @@ def main(
     real_videos = []
     for item in tqdm(meta_data):
         sce = item['scene']
-        frames_info = item['samples']
-        frames = []
-        for im_path in frames_info:
-            im = image2pil(os.path.join(files_dir, sce, os.path.basename(im_path)))
-            frames.append(im)
-        frames = pil2arr(frames)
-        frames = frames[:eval_frames] # only load eval_frames
-        real_videos.append(frames)
+        files = os.listdir(os.path.join(gt_dir, sce))
+        for file in files:
+            if file.split('.')[-1] == 'mp4':
+                video_arr = mp4toarr(os.path.join(gt_dir, sce, file))
+                sample_frames = video_arr[::skip_gt+1]
+                # if len(sample_frames)<eval_frames:
+                #     sample_frames = list(sample_frames) + [sample_frames[-1]] * (eval_frames-len(sample_frames))
+                #     print(len(sample_frames), eval_frames-len(sample_frames))
+                real_videos.append(sample_frames[:eval_frames]) # only load eval_frames
+
     # N T H W C
     real_videos = np.array(real_videos)
     print(f'real shape {real_videos.shape}')

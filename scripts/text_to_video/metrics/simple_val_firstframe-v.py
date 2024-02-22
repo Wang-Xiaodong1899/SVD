@@ -20,8 +20,8 @@ from common import json2data
 from diffusers.utils import export_to_video
 
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
-# from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
-from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
+# from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v1_v import ActionVideoDiffusionPipeline
 # fix fps=3

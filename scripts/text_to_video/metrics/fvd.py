@@ -123,6 +123,7 @@ def calculate_fid(
 
     mean_diff = sample_mean - real_mean
     mean_norm = mean_diff @ mean_diff
+    # print(f'cov_sqrt: {np.trace(cov_sqrt)}, mean_diff: {mean_diff}')
     trace = np.trace(sample_cov) + np.trace(real_cov) - 2 * np.trace(cov_sqrt)
     fid = mean_norm + trace
     return float(fid), float(mean_norm), float(trace)
