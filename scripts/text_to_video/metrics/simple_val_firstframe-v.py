@@ -77,7 +77,8 @@ def main(
     root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first',
     train_frames = 8,
     device='cuda',
-    roll_out= 1
+    roll_out= 1,
+    checkpoint=""
 ):
     pipeline = load_models(pretrained_model_name_or_path, device)
 
@@ -90,7 +91,7 @@ def main(
     meta_data = json2data('/mnt/lustrenew/wangxiaodong/data/nuscene/samples_group_sort_val.json')
     files_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/val_group'
 
-    version = os.path.basename(pretrained_model_name_or_path)
+    version = os.path.basename(pretrained_model_name_or_path) + checkpoint
 
     os.makedirs(os.path.join(root_dir, version), exist_ok=True)
 

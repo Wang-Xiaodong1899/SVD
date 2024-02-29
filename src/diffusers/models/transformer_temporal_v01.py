@@ -351,13 +351,16 @@ class TransformerSpatioTemporalModel(nn.Module):
         hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch_frames, height * width, inner_dim)
 
         #TODO: adapt to conv2d
-        hidden_states = rearrange(hidden_states, 'b (h w) d -> b h w d', h=height, w=width)
-        hidden_states = hidden_states.permute(0, 3, 1, 2)
-        hidden_states = self.proj_in(hidden_states)
-
-        #TODO: back to linear bl d h w -> bl
-        hidden_states = rearrange(hidden_states, 'b d h w -> b d (h w)', h=height, w=width)
-        hidden_states = hidden_states.permute(0, 2, 1) # -> bl, hw, d
+        if isinstance(self.proj_in, nn.Conv2d):
+            hidden_states = rearrange(hidden_states, 'b (h w) d -> b h w d', h=height, w=width)
+            hidden_states = hidden_states.permute(0, 3, 1, 2)
+            hidden_states = self.proj_in(hidden_states)
+            #TODO: back to linear bl d h w -> bl
+            hidden_states = rearrange(hidden_states, 'b d h w -> b d (h w)', h=height, w=width)
+            hidden_states = hidden_states.permute(0, 2, 1) # -> bl, hw, d
+        else:
+            hidden_states = self.proj_in(hidden_states)
+        
 
         num_frames_emb = torch.arange(num_frames, device=hidden_states.device)
         num_frames_emb = num_frames_emb.repeat(batch_size, 1)
@@ -404,14 +407,17 @@ class TransformerSpatioTemporalModel(nn.Module):
             )
 
         # 3. Output
-        #TODO adapt to conv2d
-        hidden_states = rearrange(hidden_states, 'b (h w) d -> b h w d', h=height, w=width)
-        hidden_states = hidden_states.permute(0, 3, 1, 2)
-        hidden_states = self.proj_out(hidden_states)
+        if isinstance(self.proj_out, nn.Conv2d):
+            #TODO adapt to conv2d
+            hidden_states = rearrange(hidden_states, 'b (h w) d -> b h w d', h=height, w=width)
+            hidden_states = hidden_states.permute(0, 3, 1, 2)
+            hidden_states = self.proj_out(hidden_states)
+            #TODO: back to linear bl d h w -> bl
+            hidden_states = rearrange(hidden_states, 'b d h w -> b d (h w)', h=height, w=width)
+            hidden_states = hidden_states.permute(0, 2, 1) # -> bl, hw, d
+        else:
+            hidden_states = self.proj_out(hidden_states)
 
-        #TODO: back to linear bl d h w -> bl
-        hidden_states = rearrange(hidden_states, 'b d h w -> b d (h w)', h=height, w=width)
-        hidden_states = hidden_states.permute(0, 2, 1) # -> bl, hw, d
         hidden_states = hidden_states.reshape(batch_frames, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
 
         output = hidden_states + residual

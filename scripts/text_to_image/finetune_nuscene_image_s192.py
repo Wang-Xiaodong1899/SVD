@@ -431,7 +431,7 @@ def parse_args():
     parser.add_argument(
         "--checkpointing_steps",
         type=int,
-        default=10000,
+        default=100000,
         help=(
             "Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"
             " training using `--resume_from_checkpoint`."
@@ -440,7 +440,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoints_total_limit",
         type=int,
-        default=1,
+        default=4,
         help=("Max number of checkpoints to store."),
     )
     parser.add_argument(
@@ -465,7 +465,7 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2i-ft-s192",
+        default="t2i-ft-s192-e",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -909,8 +909,10 @@ def main():
                                     shutil.rmtree(removing_checkpoint)
 
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                        accelerator.save_state(save_path)
+                        unwrapped_unet = accelerator.unwrap_model(unet)
+                        unwrapped_unet.save_pretrained(save_path)
                         logger.info(f"Saved state to {save_path}")
+                        del unwrapped_unet
 
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)

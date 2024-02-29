@@ -484,6 +484,11 @@ def parse_args():
         default=0.1,
         help="ratio for drop image context"
     )
+    parser.add_argument(
+        "--cross_attention_dim",
+        type=int,
+        default=768,
+    )
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -618,7 +623,7 @@ def main():
     
     # for video
     # load model manually to adapt to new state_dicts
-    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4)
+    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=args.cross_attention_dim, in_channels=4)
 
     unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
     unet_files = os.listdir(unet_dir)
@@ -705,7 +710,7 @@ def main():
                 # load diffusers style into model
                 # load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
                 # model.register_to_config(**load_model.config)
-                load_model = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4)
+                load_model = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=args.cross_attention_dim, in_channels=4)
                 # inner_tensors = {}
                 # with safe_open("/home/wxd/video-generation/diffusers/examples/text_to_image/sd-drive-ep40/unet/diffusion_pytorch_model.safetensors", framework="pt", device='cpu') as f:
                 #     for k in f.keys():

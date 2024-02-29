@@ -12,9 +12,11 @@ import fire
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
+from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
+
 import sys
 sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline, AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 
 DATAROOT = '/mnt/lustrenew/wangxiaodong/data/nuscene'
 img_size = (192, 384)
@@ -57,17 +59,55 @@ def main(
         split='val',
         device='cuda:0',
         save_gt=False,
-        save_dir='/mnt/lustrenew/wangxiaodong/data/nuscene_val'
+        save_dir='/mnt/lustrenew/wangxiaodong/data/nuscene_val',
+        checkpoint=None
 ):
     os.makedirs(save_dir, exist_ok=True)
     if version==None:
         version = os.path.basename(base_model).split('.')[0]
+    if checkpoint:
+        version = version + f"-{checkpoint}"
     print(f'synthsizing image for version {version}')
     if save_gt:
         os.makedirs(os.path.join(save_dir, 'gt'), exist_ok=True)
     os.makedirs(os.path.join(save_dir, version), exist_ok=True)
 
-    pipeline = StableDiffusionPipeline.from_pretrained(base_model, torch_dtype=torch.float16, use_safetensors=True).to(device)
+    # all components
+    text_encoder = CLIPTextModel.from_pretrained(
+        base_model, subfolder="text_encoder"
+    )
+    vae = AutoencoderKL.from_pretrained(
+        base_model, subfolder="vae"
+    )
+
+    text_encoder.eval()
+    vae.eval()
+    text_encoder.to(device)
+    vae.to(device)
+
+    tokenizer = CLIPTokenizer.from_pretrained(base_model, subfolder="tokenizer")
+    scheduler = DDPMScheduler.from_pretrained(base_model, subfolder="scheduler")
+    feature_extractor = CLIPImageProcessor.from_pretrained(base_model, subfolder="feature_extractor")
+
+    if checkpoint:
+        unet_path = os.path.join(base_model, f"checkpoint-{checkpoint}")
+    else:
+        unet_path = os.path.join(base_model, "unet")
+
+    unet = UNet2DConditionModel.from_pretrained(unet_path)
+    unet.eval()
+    unet = unet.to(device)
+
+    pipeline = StableDiffusionPipeline(
+        text_encoder=text_encoder,
+        vae=vae,
+        unet=unet,
+        scheduler=scheduler,
+        tokenizer=tokenizer,
+        feature_extractor=feature_extractor,
+        safety_checker=None
+    )
+    pipeline= pipeline.to(device).to(torch.float16)
 
     print(f'synthsizing image from {split} split')
     dataset = val_dataset(split=split)
@@ -91,8 +131,8 @@ def main(
         for (idx, p) in enumerate(path):
             ims = images[idx]
             name = os.path.basename(p)
-            ims.save(os.path.join(save_dir, version, name.split('.')[0]+'-1.jpg'))
-    print('Duplicate each images!')
+            ims.save(os.path.join(save_dir, version, name.split('.')[0]+'.jpg'))
+    # print('Duplicate each images!')
     print('Save Done!')
 
 if __name__ == '__main__':

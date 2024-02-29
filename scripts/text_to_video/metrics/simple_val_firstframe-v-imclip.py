@@ -54,8 +54,12 @@ def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smo
     # unet.temp_style = "image" # use image clip embedding
 
     unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style = "image")
+    if "unet" not in os.listdir(pretrained_model_name_or_path):
+        dm_path = os.path.join(pretrained_model_name_or_path, "diffusion_pytorch_model.safetensors")
+    else:
+        dm_path = os.path.join(pretrained_model_name_or_path, "unet", "diffusion_pytorch_model.safetensors")
     tensors = {}
-    with safe_open(os.path.join(pretrained_model_name_or_path, "unet", "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
+    with safe_open(dm_path, framework="pt", device='cpu') as f:
         for k in f.keys():
             tensors[k] = f.get_tensor(k)
     miss_keys, ignore_keys = unet.load_state_dict(tensors, strict=True)
@@ -95,7 +99,7 @@ def main(
     root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first',
     train_frames = 8,
     device='cuda',
-    roll_out= 1
+    roll_out= 1,
 ):
     pipeline = load_models(pretrained_model_name_or_path, device)
 
@@ -108,7 +112,11 @@ def main(
     meta_data = json2data('/mnt/lustrenew/wangxiaodong/data/nuscene/samples_group_sort_val.json')
     files_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/val_group'
 
-    version = os.path.basename(pretrained_model_name_or_path)
+    paths = pretrained_model_name_or_path.split('/')
+    base_model = paths[-2]
+    checkpoint = paths[-1]
+
+    version = base_model + f"-{checkpoint}"
 
     os.makedirs(os.path.join(root_dir, version), exist_ok=True)
 

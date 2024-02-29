@@ -1,0 +1,3 @@
+export MASTER_ADDR=$(scontrol show hostname ${SLURM_NODELIST} | head -n 1)
+echo $MASTER_ADDR
+accelerate launch --config_file /mnt/cache/wangxiaodong/.cache/huggingface/accelerate/ddp.yaml --mixed_precision="fp16" /mnt/cache/wangxiaodong/SDM/scripts/text_to_image/finetune_nuscene_image_s192.py --use_ema --train_batch_size=32 --gradient_accumulation_steps=2 --gradient_checkpointing --num_train_epochs 500 --learning_rate=1e-4 --max_grad_norm=1 --enable_xformers_memory_efficient_attention --lr_scheduler=cosine --lr_warmup_steps=10 --output_dir=image-e-s192-1e-4 --checkpointing_steps=4000 --pretrained_model_name_or_path /mnt/lustrenew/wangxiaodong/models/stable-diffusion-v1-4 --drop_text

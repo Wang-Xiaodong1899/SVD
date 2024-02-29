@@ -433,7 +433,7 @@ def parse_args():
     parser.add_argument(
         "--checkpointing_steps",
         type=int,
-        default=10000,
+        default=1000000,
         help=(
             "Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"
             " training using `--resume_from_checkpoint`."
@@ -442,7 +442,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoints_total_limit",
         type=int,
-        default=1,
+        default=4,
         help=("Max number of checkpoints to store."),
     )
     parser.add_argument(
@@ -911,8 +911,10 @@ def main():
                                     shutil.rmtree(removing_checkpoint)
 
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                        accelerator.save_state(save_path)
+                        unwrapped_unet = accelerator.unwrap_model(unet)
+                        unwrapped_unet.save_pretrained(save_path)
                         logger.info(f"Saved state to {save_path}")
+                        del unwrapped_unet
 
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
