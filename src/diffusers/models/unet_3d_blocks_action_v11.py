@@ -2215,6 +2215,8 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
                     **ckpt_kwargs,
                 )
 
+                # print(f'encoder_hidden_states.shape {encoder_hidden_states.shape}')
+
                 hidden_states = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,

@@ -1,0 +1,3 @@
+export MASTER_ADDR=$(scontrol show hostname ${SLURM_NODELIST} | head -n 1)
+echo $MASTER_ADDR
+accelerate launch --config_file /mnt/cache/wangxiaodong/.cache/huggingface/accelerate/zero2.yaml  --mixed_precision="fp16" /mnt/cache/wangxiaodong/SDM/scripts/action_to_video/finetune_video_text_s768-v-imclip.py --train_batch_size=1 --gradient_accumulation_steps=4 --gradient_checkpointing --num_train_epochs 4000 --checkpointing_steps 2000 --learning_rate=5e-5 --max_grad_norm=1 --enable_xformers_memory_efficient_attention --lr_scheduler=cosine --lr_warmup_steps=10 --output_dir=video-v11-v-imclip-s768-5e-5 --temp_style="image" --img_style="pooler_output" --pretrained_model_name_or_path /mnt/lustrenew/wangxiaodong/smodels/image-v-s768-1e-4/checkpoint-8000 --variant 'fp16'

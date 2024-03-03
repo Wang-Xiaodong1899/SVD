@@ -126,7 +126,7 @@ def calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
 
 
 def main(
-    tgt_dir='/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first-15/video-v11-ep200-s196',
+    tgt_dir='/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first-8-action/action-v30--5e-5-checkpoint-6000',
     version = None,
     num_frames=8,
     eval_frames=8,
