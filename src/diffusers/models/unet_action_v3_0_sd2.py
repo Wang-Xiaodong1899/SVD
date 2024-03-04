@@ -10,12 +10,13 @@ from ..utils import BaseOutput, logging
 from .attention_processor import CROSS_ATTENTION_PROCESSORS, AttentionProcessor, AttnProcessor
 from .embeddings import TimestepEmbedding, Timesteps
 from .modeling_utils import ModelMixin
-from .unet_3d_blocks_action_base import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
+from .unet_3d_blocks_action_base_sd2 import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
 from .resnet_action import Downsample2D
 
 # NOTE V20
 # extend v11 with action in added_time_ids
 # added_time_ids: (fps, steer, speed)
+# mlp to encode action embedding
 # NOTE based on action_base
 
 
@@ -96,7 +97,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         layers_per_block: Union[int, Tuple[int]] = 2,
         cross_attention_dim: Union[int, Tuple[int]] = 1024,
         transformer_layers_per_block: Union[int, Tuple[int], Tuple[Tuple]] = 1,
-        num_attention_heads: Union[int, Tuple[int]] = (5, 10, 10, 20),
+        num_attention_heads: Union[int, Tuple[int]] = (5, 10, 20, 20),
         num_frames: int = 8,
         temp_style: str = "text"
     ):
@@ -148,6 +149,18 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
 
         self.add_time_proj = Timesteps(addition_time_embed_dim, True, downscale_freq_shift=0)
         self.add_embedding = TimestepEmbedding(projection_class_embeddings_input_dim, time_embed_dim)
+
+        # NOTE add add_embedding projection
+        # add pos_embedding
+        # print(f'projection_class_embeddings_input_dim : {projection_class_embeddings_input_dim}, {time_embed_dim}') 768,1280
+        self.pos_proj = Timesteps(projection_class_embeddings_input_dim, True, 0)
+        self.pos_embed = TimestepEmbedding(projection_class_embeddings_input_dim, time_embed_dim)
+
+        add_modules = [nn.Linear(time_embed_dim, time_embed_dim)]
+        for _ in range(1):
+            add_modules.append(nn.GELU())
+            add_modules.append(nn.Linear(time_embed_dim, cross_attention_dim))
+        self.add_embedding_projector = nn.Sequential(*add_modules)
 
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
@@ -464,6 +477,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         time_embeds = time_embeds.to(emb.dtype)
         aug_emb = self.add_embedding(time_embeds)
 
+        # print(f'aug.shape {aug_emb.shape}') # b f d
+
         emb = emb + aug_emb
 
         # Flatten the batch and frames dimensions
@@ -476,6 +491,27 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         encoder_hidden_states = encoder_hidden_states.repeat_interleave(num_frames, dim=0)
         if clip_embedding is not None:
             clip_embedding = clip_embedding.repeat_interleave(num_frames, dim=0)
+        
+
+        # NOTE: replace clip_embedding with add_embedding
+        # clip_embedding as an input port
+        num_frames_emb = torch.arange(num_frames, device=sample.device)
+        num_frames_emb = num_frames_emb.repeat(batch_size, 1) # (b, f)
+        num_frames_emb = num_frames_emb.reshape(-1) # flatten
+        add_pos_emb = self.pos_proj(num_frames_emb)
+        add_pos_emb = add_pos_emb.to(dtype=sample.dtype)
+
+        real_pos_emb = self.pos_embed(add_pos_emb) # (bf, d)
+        real_pos_emb = real_pos_emb[:, None, :]
+
+        aug_emb = aug_emb.reshape((batch_size*num_frames, 1, -1))
+
+        # print(f'real pos emb {real_pos_emb.shape}, aug_emb: {aug_emb.shape}') # b, 1, 1280
+
+        replace_embedding = aug_emb + real_pos_emb
+        replace_embedding = self.add_embedding_projector(replace_embedding.squeeze())
+        
+        clip_embedding = replace_embedding[:, None] # (b*f, l, d)
 
         # 2. pre-process
         sample = self.conv_in(sample)

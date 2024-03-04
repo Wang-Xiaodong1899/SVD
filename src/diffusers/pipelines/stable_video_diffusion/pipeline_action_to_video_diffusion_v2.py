@@ -335,14 +335,22 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
 
         # 1. Check inputs. Raise error if not correct
         # self.check_inputs(image, height, width)
-        image = batch['pil'] # need pil list to best
+        if len(image) == 0:
+            print('image is blank')
+            image = batch['pil'] # need pil list to best
 
-        pils = []
-        # numpy to list of pil
-        for im in image:
-            pils.append(Image.fromarray(im.numpy().astype('uint8')).convert('RGB'))
-        image = pils
-        prompt = batch['caption']
+            pils = []
+            # numpy to list of pil
+            for im in image:
+                pils.append(Image.fromarray(im.numpy().astype('uint8')).convert('RGB'))
+            image = pils
+        # else pass a list of image
+        # print(image)
+
+        if prompt is None:
+            prompt = batch['caption']
+        
+        print(prompt)
 
         ground_truth = batch['video'] # np dtype
 
@@ -412,8 +420,8 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         # no unsqueeze and repeat here for action 
 
         # 5. action added_time_ids
-        steers = batch['steer'] # b, f
-        speeds = batch['speed'] # b, f
+        steers = batch['steer'][:, :num_frames] # b, f
+        speeds = batch['speed'][:, :num_frames] # b, f
         fps = torch.ones_like(speeds) * 2
 
         added_time_ids = torch.stack([fps, steers, speeds], dim=-1) # b, f, 3

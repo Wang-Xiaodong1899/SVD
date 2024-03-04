@@ -4,13 +4,15 @@
 # NOTE
 # This Version
 # video frames = 8
-# img size: 384x768
+# img size: 384x192
 # -v: v-prediction
 # imclip: image clip embedding for temporal cross attention
 # NOTE
 # unet_v11 now support clip_embedding
-# S768 need 1024 clip embedding
-# vision clip model : CLIP-ViT-H-14-laion2B-s32B-b79K
+# v30: (fps, steer, speed) -> mlp -> image embedding port -> attend video
+
+
+
 
 import argparse
 import logging
@@ -44,7 +46,7 @@ sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
-from diffusers.models.unet_action_base import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action_v3_0_sd2 import UNetSpatioTemporalConditionModel_Action
 
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
@@ -52,7 +54,7 @@ from diffusers.utils import check_min_version, deprecate, is_wandb_available, ma
 from diffusers.utils.import_utils import is_xformers_available
 
 
-from nuscene_video import Videoframes
+from nuscene_action import Actionframes
 from safetensors import safe_open
 from collections import OrderedDict
 
@@ -204,14 +206,14 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/mnt/lustrenew/wangxiaodong/smodels/image-v-s768-1e-4/checkpoint-8000",
+        default="/home/wxd/video-generation/diffusers/examples/text_to_image/drive-s256-ep40",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--pretrained_clip_model_name_or_path",
         type=str,
-        default="/mnt/lustrenew/wangxiaodong/models/CLIP-ViT-H-14-laion2B-s32B-b79K",
+        default="/mnt/lustrenew/wangxiaodong/models/clip-vit-large-patch14",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -482,7 +484,7 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2v_v01_s768",
+        default="a2v_v30_base_s192",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -526,34 +528,6 @@ def parse_args():
         args.non_ema_revision = args.revision
 
     return args
-
-
-def get_add_time_ids(
-        batch_size,
-        fps=2,
-        motion_bucket_id=127,
-        noise_aug_strength=0.02,
-        num_videos_per_prompt=1,
-        do_classifier_free_guidance=False,
-    ):
-        add_time_ids = [fps, motion_bucket_id, noise_aug_strength]
-
-        passed_add_embed_dim = 256 * len(add_time_ids)
-        expected_add_embed_dim = 768
-
-        if expected_add_embed_dim != passed_add_embed_dim:
-            raise ValueError(
-                f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
-            )
-
-        add_time_ids = torch.tensor([add_time_ids])
-        add_time_ids = add_time_ids.repeat(batch_size * num_videos_per_prompt, 1)
-
-        if do_classifier_free_guidance:
-            add_time_ids = torch.cat([add_time_ids, add_time_ids])
-
-        return add_time_ids
-
 
 def main():
     args = parse_args()
@@ -645,7 +619,7 @@ def main():
 
         #NOTE add clip vision model
         clip_model = transformers.CLIPModel.from_pretrained(
-            args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
+        args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
 
 
     
@@ -739,7 +713,7 @@ def main():
                 # load diffusers style into model
                 # load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
                 # model.register_to_config(**load_model.config)
-                load_model = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=1024, in_channels=4)
+                load_model = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4)
                 # inner_tensors = {}
                 # with safe_open("/home/wxd/video-generation/diffusers/examples/text_to_image/sd-drive-ep40/unet/diffusion_pytorch_model.safetensors", framework="pt", device='cpu') as f:
                 #     for k in f.keys():
@@ -813,7 +787,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(384, 768))
+        train_dataset = Actionframes(split='train', args=args, tokenizer=tokenizer, img_size=(384, 768), max_video_len = 8)
 
 
     # DataLoaders creation:
@@ -940,8 +914,6 @@ def main():
 
                 latents = rearrange(latents, '(b l) c h w -> b l c h w', b=bs, l=l)
 
-                # print('encoded latents shape: ',latents.shape) # (b, l, 4, h, w)
-
                 # image context
                 if args.drop_context > 0:
                     prob = torch.rand(1).item()
@@ -1002,7 +974,12 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                added_time_ids = get_add_time_ids(bsz)
+                # NOTE FOR Action
+                steers = batch['steer'] # b, f
+                speeds = batch['speed'] # b, f
+                fps = torch.ones_like(speeds) * 2
+
+                added_time_ids = torch.stack([fps, steers, speeds], dim=-1) # b, f, 3
 
                 # Predict the noise residual and compute loss
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context, clip_embedding=clip_embedding).sample

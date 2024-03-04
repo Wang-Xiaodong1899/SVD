@@ -10,14 +10,14 @@ from ..utils import BaseOutput, logging
 from .attention_processor import CROSS_ATTENTION_PROCESSORS, AttentionProcessor, AttnProcessor
 from .embeddings import TimestepEmbedding, Timesteps
 from .modeling_utils import ModelMixin
-from .unet_3d_blocks_action_base import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
+from .unet_3d_blocks_action_base_sd2 import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
 from .resnet_action import Downsample2D
 
-# NOTE V20
-# extend v11 with action in added_time_ids
-# added_time_ids: (fps, steer, speed)
-# NOTE based on action_base
-
+# NOTE V11
+# we add image context to first layers of down, mid, up blocks 
+# To enhance the image guidance
+# NOTE action version
+# we fix eps and num_attention_heads problem
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -96,7 +96,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         layers_per_block: Union[int, Tuple[int]] = 2,
         cross_attention_dim: Union[int, Tuple[int]] = 1024,
         transformer_layers_per_block: Union[int, Tuple[int], Tuple[Tuple]] = 1,
-        num_attention_heads: Union[int, Tuple[int]] = (5, 10, 10, 20),
+        num_attention_heads: Union[int, Tuple[int]] = (5, 10, 20, 20), # NOTE need to be (5, 10, 20, 20)
         num_frames: int = 8,
         temp_style: str = "text"
     ):
@@ -438,8 +438,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
 
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
         batch_size, num_frames = sample.shape[:2]
-
-        # timestep should be (bsz, )
+        # print(f'batch size {batch_size}, num_frames {num_frames}')
+        timesteps = timesteps.expand(batch_size)
 
         t_emb = self.time_proj(timesteps)
 
@@ -450,28 +450,23 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
 
         emb = self.time_embedding(t_emb)
 
-        emb = emb[:, None].repeat_interleave(num_frames, dim=1) #b, f, d
+        # TODO add device
+        # added_time_ids = added_time_ids.to(sample.device)
 
-
-        # NOTE asure 3 dim added_time_ids
-        added_time_ids = added_time_ids.to(sample.device)
-
-        if len(added_time_ids.shape) == 2:
-            added_time_ids = added_time_ids[:, None].repeat_interleave(num_frames, dim=1)
-
-        time_embeds = self.add_time_proj(added_time_ids.flatten())
-        time_embeds = time_embeds.reshape((batch_size, num_frames, -1))
-        time_embeds = time_embeds.to(emb.dtype)
-        aug_emb = self.add_embedding(time_embeds)
-
-        emb = emb + aug_emb
+        # time_embeds = self.add_time_proj(added_time_ids.flatten())
+        # time_embeds = time_embeds.reshape((batch_size, -1))
+        # time_embeds = time_embeds.to(emb.dtype)
+        # aug_emb = self.add_embedding(time_embeds)
+        # emb = emb + aug_emb
 
         # Flatten the batch and frames dimensions
         # sample: [batch, frames, channels, height, width] -> [batch * frames, channels, height, width]
         sample = sample.flatten(0, 1)
-        emb = emb.flatten(0, 1)
 
-        
+        # print(f'sample shape: {sample.shape}')
+        # Repeat the embeddings num_video_frames times
+        # emb: [batch, channels] -> [batch * frames, channels]
+        emb = emb.repeat_interleave(num_frames, dim=0)
         # encoder_hidden_states: [batch, 1, channels] -> [batch * frames, 1, channels]
         encoder_hidden_states = encoder_hidden_states.repeat_interleave(num_frames, dim=0)
         if clip_embedding is not None:

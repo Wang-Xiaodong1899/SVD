@@ -106,7 +106,7 @@ def main(
     print('loaded pipeline!')
     
     print('loading dataset ing...')
-    train_dataset = Actionframes(None, split='val', tokenizer=tokenizer, img_size=(192, 384), max_video_len = 8)
+    train_dataset = Actionframes(None, split='val', tokenizer=tokenizer, img_size=(192, 384), max_video_len = num_frames)
     
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -125,15 +125,35 @@ def main(
     os.makedirs(os.path.join(root_dir, version), exist_ok=True)
 
     # caption model
-    # git_processor_large = AutoProcessor.from_pretrained("/mnt/lustrenew/wangxiaodong/models/git-large-coco")
-    # git_model_large = AutoModelForCausalLM.from_pretrained("/mnt/lustrenew/wangxiaodong/models/git-large-coco")
-    # print('loaded caption model!')
+    git_processor_large = AutoProcessor.from_pretrained("/mnt/lustrenew/wangxiaodong/models/git-large-coco")
+    git_model_large = AutoModelForCausalLM.from_pretrained("/mnt/lustrenew/wangxiaodong/models/git-large-coco")
+    print('loaded caption model!')
 
     for n, batch in tqdm(enumerate(train_dataloader)):
         # if n>2:
         #     break
+
+        # NOTE only support bs=1!
+
         video = pipeline(batch, num_frames=train_frames, height=192, width=384).frames
 
+        # print(type(video)) #list
+
+        idx = 0
+        for r in range(1, roll_out):
+            idx = idx + 7
+            curr_batch = {}
+            for k, v in batch.items():
+                if 'steer' in k or 'speed' in k:
+                    curr_batch[k] = v[:, idx:]
+                else:
+                    curr_batch[k] = v
+            curr_frame = video[0][-1]
+            # print(f'curr: {curr_frame}')
+            curr_prompt = generate_caption(curr_frame, git_processor_large, git_model_large)
+
+            video_ex = pipeline(curr_batch, image=[curr_frame], prompt=[curr_prompt], num_frames=train_frames, height=192, width=384).frames
+            video[0] = video[0] + video_ex[0][1:]
         print(f'len of final video {len(video)}')
         names = batch['name']
         scenes = batch['scene']
@@ -142,7 +162,7 @@ def main(
         for i in range(len(names)):
             name = os.path.basename(names[i]).split('.')[0]
             os.makedirs(os.path.join(root_dir, version, scenes[i]), exist_ok=True)
-            im = Image.fromarray(imgarr[i].numpy().astype('uint8')).convert('RGB')
+            # im = Image.fromarray(imgarr[i].numpy().astype('uint8')).convert('RGB')
             # im.save(os.path.join(root_dir, version, scenes[i], f'{name}.jpg'))
             export_to_video(video[i], os.path.join(root_dir, version, scenes[i], f'{name}.mp4'), fps=6)
 

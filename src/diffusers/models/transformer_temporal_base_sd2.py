@@ -235,8 +235,8 @@ class TransformerSpatioTemporalModel(nn.Module):
         # 2. Define input layers
         self.in_channels = in_channels
         self.norm = torch.nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=1e-6)
-        # self.proj_in = nn.Linear(in_channels, inner_dim) # for sd2.1
-        self.proj_in = nn.Conv2d(in_channels, inner_dim, kernel_size=1, stride=1, padding=0)
+        self.proj_in = nn.Linear(in_channels, inner_dim) # for sd2.1
+        # self.proj_in = nn.Conv2d(in_channels, inner_dim, kernel_size=1, stride=1, padding=0)
 
 
         # 3. Define transformers blocks
@@ -274,8 +274,8 @@ class TransformerSpatioTemporalModel(nn.Module):
         # 4. Define output layers
         self.out_channels = in_channels if out_channels is None else out_channels
         # TODO: should use out_channels for continuous projections
-        # self.proj_out = nn.Linear(inner_dim, in_channels) # for sd2.1
-        self.proj_out = nn.Conv2d(inner_dim, in_channels, kernel_size=1, stride=1, padding=0)
+        self.proj_out = nn.Linear(inner_dim, in_channels) # for sd2.1
+        # self.proj_out = nn.Conv2d(inner_dim, in_channels, kernel_size=1, stride=1, padding=0)
 
         self.gradient_checkpointing = False
         self.temp_style = temp_style

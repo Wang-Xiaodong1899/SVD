@@ -10,13 +10,14 @@ from ..utils import BaseOutput, logging
 from .attention_processor import CROSS_ATTENTION_PROCESSORS, AttentionProcessor, AttnProcessor
 from .embeddings import TimestepEmbedding, Timesteps
 from .modeling_utils import ModelMixin
-from .unet_3d_blocks_action_v11 import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
+from .unet_3d_blocks_action_base import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
 from .resnet_action import Downsample2D
 
 # NOTE V20
 # extend v11 with action in added_time_ids
 # added_time_ids: (fps, steer, speed)
 # mlp to encode action embedding
+# NOTE based on action_base
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -96,7 +97,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         layers_per_block: Union[int, Tuple[int]] = 2,
         cross_attention_dim: Union[int, Tuple[int]] = 1024,
         transformer_layers_per_block: Union[int, Tuple[int], Tuple[Tuple]] = 1,
-        num_attention_heads: Union[int, Tuple[int]] = (5, 10, 10, 20),
+        num_attention_heads: Union[int, Tuple[int]] = (5, 10, 20, 20), # NOTE need be (5, 10, 20, 20)
         num_frames: int = 8,
         temp_style: str = "text"
     ):
