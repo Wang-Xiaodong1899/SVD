@@ -390,6 +390,10 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
 
         prompt_embeds = prompt_embeds.to(dtype=prompt_embeds_dtype, device=device)
 
+        # NOTE add CFG to prompt_embeds
+        if do_classifier_free_guidance:
+            prompt_embeds = torch.cat([prompt_embeds] * 2)
+
         # check prompt_embeds shape
         print(f'text emb shape: ', prompt_embeds.shape)
 
@@ -426,6 +430,10 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
 
         added_time_ids = torch.stack([fps, steers, speeds], dim=-1) # b, f, 3
         added_time_ids = added_time_ids.to(device)
+
+        # NOTE add CFG to action tokens
+        if do_classifier_free_guidance:
+            added_time_ids = torch.cat([added_time_ids] * 2)
 
         # 4. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
