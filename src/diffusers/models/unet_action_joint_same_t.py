@@ -428,7 +428,6 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         image_context: torch.FloatTensor = None,
         clip_embedding: torch.FloatTensor = None,
         history_len: int = None,
-        timestep_extra: Union[torch.Tensor, float, int] = None,
     ) -> Union[UNetSpatioTemporalConditionOutput, Tuple]:
         r"""
         The [`UNetSpatioTemporalConditionModel`] forward method.
@@ -478,22 +477,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
 
         emb = emb[:, None].repeat_interleave(num_frames, dim=1) #b, f, d
 
-        if timestep_extra == None:
-            timestep_extra = timesteps
-            print('Warning: Cause timestep_extra is None, set timestep_extra = timesteps')
-
-        # print(f'timestep_extra: {timestep_extra.shape}')
-
-        # extra timestep
-        t_emb_extra = self.time_proj_extra(timestep_extra)
-        t_emb_extra = t_emb_extra.to(dtype=sample.dtype)
-
-        emb_extra = self.time_embedding_extra(t_emb_extra)
-
-        emb_extra = emb_extra[:, None].repeat_interleave(num_frames, dim=1) #b, f, d
-
         # naive version
-        emb = emb + emb_extra # retain (b, f, d)
+        emb = emb # retain (b, f, d)
 
         # NOTE asure 3 dim added_time_ids
         added_time_ids = added_time_ids.to(sample.device)

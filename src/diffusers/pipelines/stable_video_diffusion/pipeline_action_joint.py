@@ -26,13 +26,14 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPV
 
 from ...image_processor import VaeImageProcessor
 from ...models import AutoencoderKL
-from diffusers.models.unet_action_v2_0 import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action_joint import UNetSpatioTemporalConditionModel_Action
 from ...schedulers import KarrasDiffusionSchedulers
 from ...utils import BaseOutput, logging
 from ...utils.torch_utils import randn_tensor
 from ..pipeline_utils import DiffusionPipeline
 
 from PIL import Image
+
 from diffusers.utils import export_to_video
 
 
@@ -74,6 +75,7 @@ class ActionVideoDiffusionPipelineOutput(BaseOutput):
     """
 
     frames: Union[List[PIL.Image.Image], np.ndarray]
+    actions: Union[torch.Tensor, np.ndarray]
 
 
 class ActionVideoDiffusionPipeline(DiffusionPipeline):
@@ -106,9 +108,10 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         tokenizer: CLIPTokenizer,
         unet: UNetSpatioTemporalConditionModel_Action,
         scheduler: KarrasDiffusionSchedulers,
+        scheduler_x: KarrasDiffusionSchedulers,
         feature_extractor: CLIPImageProcessor,
         image_encoder: CLIPVisionModelWithProjection = None,
-        clip_model: CLIPModel = None
+        clip_model: CLIPModel = None,
     ):
         super().__init__()
 
@@ -118,6 +121,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
             tokenizer=tokenizer,
             unet=unet,
             scheduler=scheduler,
+            scheduler_x=scheduler_x,
             feature_extractor=feature_extractor,
             image_encoder=image_encoder,
             clip_model=clip_model
@@ -126,6 +130,8 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.scheduler.config.prediction_type = "v_prediction"
         print(f'scheduler prediction type: {self.scheduler.config.prediction_type}')
+        self.scheduler_x.config.prediction_type = "sample"
+        print(f'scheduler prediction type: {self.scheduler_x.config.prediction_type}')
 
     # edit encode_image for clip_model.vision_model
     def _encode_image(self, image, device, num_videos_per_prompt, do_classifier_free_guidance, img_style="pooler_output"):
@@ -326,6 +332,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         action: torch.FloatTensor = None,
         image_context: torch.FloatTensor = None,
         prompt: Union[str, List[str]] = None,
+        history_len: int = 8
     ):
         # 0. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
@@ -415,6 +422,8 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         # NOTE
         image_latents = image_latents * self.vae.config.scaling_factor
 
+        print(f'image_latents shape: {image_latents.shape}') # 1 4 24 48
+
         # cast back to fp16 if needed
         if needs_upcasting:
             self.vae.to(dtype=torch.float16)
@@ -425,23 +434,20 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         # no unsqueeze and repeat here for action 
 
         # 5. action added_time_ids
-        steers = batch['steer'][:, :num_frames] # b, f
-        speeds = batch['speed'][:, :num_frames] # b, f
+        steers = batch['steer'] # b, f
+        speeds = batch['speed'] # b, f
         fps = torch.ones_like(speeds) * 2
 
-        added_time_ids = torch.stack([fps, steers, speeds], dim=-1) # b, f, 3
-        added_time_ids = added_time_ids.to(device)
-
-        # NOTE add CFG to action tokens
-        if do_classifier_free_guidance:
-            added_time_ids = torch.cat([added_time_ids] * 2)
-
-        # # NOTE debug
-        # added_time_ids = torch.zeros_like(added_time_ids)
+        action = torch.stack([steers, speeds], dim=-1) # b, f, 2
+        history_action = action[:, :history_len]
+        future_action = action[:, history_len:]
 
         # 4. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
+
+        # NOTE
+        self.scheduler_x.set_timesteps(num_inference_steps, device=device)
 
         # 5. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
@@ -468,23 +474,46 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
-        # print(f'action shape: {action.shape}')
+
+        # NOTE action sampling
+        # noisy_action = torch.randn_like(future_action) # random future action
+        # NOTE debug
+        noisy_action = torch.zeros_like(future_action)
+        # print(f'noisy action: {noisy_action.shape}') # (1, 8, 2)
+
+        added_time_ids = torch.cat([history_action, noisy_action], 1)
+        added_time_ids = added_time_ids.to(device)
+        history_action = history_action.to(device)
+        noisy_action = noisy_action.to(device)
+
+        # debug 
+        added_time_ids = torch.zeros_like(added_time_ids)
+
+        # print(f'added_time_ids: {added_time_ids.shape}') # (1, 16, 2)
+
+        # NOTE add CFG to action tokens
+        if do_classifier_free_guidance:
+            added_time_ids = torch.cat([added_time_ids] * 2)
+        
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
-                noise_pred = self.unet(
+                print(f'time: {i}: t: {t}')
+
+                added_time_ids = torch.zeros_like(added_time_ids)
+
+                noise_pred, action_pred = self.unet(
                     latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds, # use text prompt here
                     added_time_ids=added_time_ids,
                     return_dict=False,
                     image_context=image_latents,
-                    action=action,
-                    clip_embedding=image_embeddings
-                )[0]
+                    clip_embedding=image_embeddings,
+                    history_len=history_len,
+                )
 
                 # perform guidance
                 if do_classifier_free_guidance:
@@ -493,6 +522,13 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+                noisy_action = self.scheduler_x.step(action_pred, t, noisy_action).prev_sample
+
+                # concat to added_time_ids
+                added_time_ids = torch.cat([history_action, noisy_action], 1)
+                added_time_ids = added_time_ids.to(device)
+                if do_classifier_free_guidance:
+                    added_time_ids = torch.cat([added_time_ids] * 2)
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -510,7 +546,14 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
                     self.vae.to(dtype=torch.float16)
                 frames = self.decode_latents(latents, num_frames, decode_chunk_size)
                 frames = tensor2vid(frames, self.image_processor, output_type=output_type)
-                export_to_video(frames[0], f'debug_a2v_{i}.mp4', fps=6)
+                export_to_video(frames[0], f'debug_{i}.mp4', fps=6)
+
+                # NOTE debug image latents
+                # image_latents_t = image_latents.unsqueeze(1)
+                # frames_context = self.decode_latents(image_latents_t, 1, decode_chunk_size) # [batch, channels, frames, height, width]
+                # frames_context = tensor2vid(frames_context, self.image_processor, output_type=output_type)
+                # frames_context[0][0].save(f'context_{i}.jpg')
+
 
         if not output_type == "latent":
             # cast back to fp16 if needed
@@ -526,7 +569,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         if not return_dict:
             return frames
 
-        return ActionVideoDiffusionPipelineOutput(frames=frames)
+        return ActionVideoDiffusionPipelineOutput(frames=frames, actions=noisy_action)
 
 
 # resizing utils

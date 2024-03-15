@@ -329,21 +329,13 @@ class TransformerSpatioTemporalModel(nn.Module):
             # pure text
             time_context = encoder_hidden_states
         
-
-        # time_context_first_timestep = time_context[None, :].reshape(
-        #     batch_size, num_frames, -1, time_context.shape[-1]
-        # )[:, 0]
-        # time_context = time_context_first_timestep[None, :].broadcast_to(
-        #     height * width, batch_size, 1, time_context.shape[-1]
-        # )
-        # time_context = time_context.reshape(height * width * batch_size, 1, time_context.shape[-1]) # (b*h*w, 1, dim)
-        # TODO: text also as the cross attention features
-        # Global time_context, ignore num_frames
-        time_context = rearrange(time_context, '(b l) n d -> b l n d', b=batch_size, l=num_frames)
-        time_context = time_context[:, 0] # b n d
+        bsf = time_context.shape[0]
+        seq_len = bsf // batch_size
+        
+        # frame-wise time_context
+        time_context = rearrange(time_context, '(b l) n d -> b (l n) d', b=batch_size, l=seq_len) # flatten frame to tokens
         time_context = repeat(time_context, 'b n d -> b x n d', x=height * width)
-        time_context = rearrange(time_context, 'b x n d -> (b x) n d') # (B*H*W, 77, C)
-        # print(f'time_context shape {time_context.shape}')
+        time_context = rearrange(time_context, 'b x n d -> (b x) n d') # (B*H*W, frame*each_frame_token, C)
 
         residual = hidden_states
 

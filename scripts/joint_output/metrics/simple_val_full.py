@@ -16,15 +16,17 @@ from einops import rearrange, repeat
 from PIL import Image
 import fire
 from safetensors import safe_open
+import json
+import numpy as np
 
 from diffusers.utils import export_to_video
 
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection, CLIPModel
-from diffusers.models.unet_action_v3_0 import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action_joint import UNetSpatioTemporalConditionModel_Action
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel, DDIMScheduler
-from diffusers.pipelines.stable_video_diffusion.pipeline_action_to_video_diffusion_v2 import ActionVideoDiffusionPipeline
+from diffusers.pipelines.stable_video_diffusion.pipeline_action_joint import ActionVideoDiffusionPipeline
 
-from scripts.action_to_video.nuscene_action_val import Actionframes
+from scripts.joint_output.nuscene_action_val import Actionframes
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
@@ -70,6 +72,7 @@ def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smo
             vae=vae,
             unet=unet,
             scheduler=scheduler,
+            scheduler_x=scheduler,
             tokenizer=tokenizer,
             feature_extractor=feature_extractor,
             clip_model=clip_model
@@ -89,8 +92,13 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
    
     return generated_caption[0]
 
+def numpy_serializable(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist() 
+    raise TypeError(f"{type(obj)} is not JSON serializable")
+
 def main(
-    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/action-v30--5e-5/checkpoint-6000',
+    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/VA_MLP-5e-5-fix/checkpoint-5000',
     num_frames = 8,
     root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first',
     train_frames = 8,
@@ -99,10 +107,11 @@ def main(
     cfg_min = 1.0,
     cfg_max = 1.0,
     steps = 25,
+    history_len = 8,
 ):
     pipeline, tokenizer = load_models(pretrained_model_name_or_path, device)
 
-    root_dir = root_dir + f'-{num_frames}-action'
+    root_dir = root_dir + f'-{num_frames}-joint'
 
     os.makedirs(root_dir, exist_ok=True)
 
@@ -123,7 +132,7 @@ def main(
     base_model = paths[-2]
     checkpoint = paths[-1]
 
-    version = base_model + f"-{checkpoint}" + f'-{cfg_min}-{cfg_max}-step{steps}-debug'
+    version = base_model + f"-{checkpoint}" + f'-{cfg_min}-{cfg_max}-step{steps}'
 
     os.makedirs(os.path.join(root_dir, version), exist_ok=True)
 
@@ -134,19 +143,42 @@ def main(
 
     new_batch = []
 
+    action_compare = []
+
     imgarr = None
     for n, batch in tqdm(enumerate(train_dataloader)):
 
-        if n>1:
+        if n>0:
             break
 
-        video = pipeline(batch, num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps).frames
+        outputs = pipeline(batch, num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps)
+
+        video = outputs.frames
+        action_hat = outputs.actions.cpu() # b*f 2
 
         names = batch['name']
         scenes = batch['scene']
         imgarr = batch['pil']
 
-        # print(type(video)) #list
+        # b f 
+        steer_gt = batch['steer'][:, history_len:]
+        speed_gt = batch['speed'][:, history_len:]
+        action_gt = torch.stack([steer_gt, speed_gt], dim=-1).cpu() # b, f, 2
+
+        # compare action_hat and action_gt
+        # action_hat = rearrange(action_hat, '(b f) d -> b f d', b=action_gt.shape[0])
+
+        for idx_n, name in enumerate(names):
+            action_hat_sam = action_hat[idx_n]
+            action_gt_sam = action_gt[idx_n]
+            action_compare.append(
+                {
+                    'scene': scenes[idx_n],
+                    'name': name,
+                    'action_hat': action_hat_sam.numpy(),
+                    'action_gt': action_gt_sam.numpy()
+                }
+            )
 
         idx = 0
         for r in range(1, roll_out):
@@ -176,6 +208,10 @@ def main(
                 video[i][0] = im.resize((384, 192))
             export_to_video(video[i], os.path.join(root_dir, version, scenes[i], f'{name}.mp4'), fps=6)
 
+    # save data
+    with open(os.path.join(root_dir, version, 'action.json'), 'w') as f:
+        json.dump(action_compare, f, default=numpy_serializable)
+    
     print('inference done!')
 
 if __name__ == '__main__':

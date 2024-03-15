@@ -10,10 +10,12 @@ from ..utils import BaseOutput, logging
 from .attention_processor import CROSS_ATTENTION_PROCESSORS, AttentionProcessor, AttnProcessor
 from .embeddings import TimestepEmbedding, Timesteps
 from .modeling_utils import ModelMixin
-from .unet_3d_blocks_action_base import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
+from .unet_3d_blocks_action_v3_0 import UNetMidBlockSpatioTemporal, get_down_block, get_up_block
 from .resnet_action import Downsample2D
 
-# NOTE V20
+from einops import rearrange
+
+# NOTE V3_0
 # extend v11 with action in added_time_ids
 # added_time_ids: (fps, steer, speed)
 # mlp to encode action embedding
@@ -156,10 +158,10 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         self.pos_proj = Timesteps(projection_class_embeddings_input_dim, True, 0)
         self.pos_embed = TimestepEmbedding(projection_class_embeddings_input_dim, time_embed_dim)
 
-        add_modules = [nn.Linear(time_embed_dim, time_embed_dim)]
+        add_modules = [nn.Linear(time_embed_dim * num_frames, time_embed_dim)]
         for _ in range(1):
             add_modules.append(nn.GELU())
-            add_modules.append(nn.Linear(time_embed_dim, cross_attention_dim))
+            add_modules.append(nn.Linear(time_embed_dim, num_frames * cross_attention_dim))
         self.add_embedding_projector = nn.Sequential(*add_modules)
 
         self.down_blocks = nn.ModuleList([])
@@ -509,7 +511,13 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         # print(f'real pos emb {real_pos_emb.shape}, aug_emb: {aug_emb.shape}') # b, 1, 1280
 
         replace_embedding = aug_emb + real_pos_emb
-        replace_embedding = self.add_embedding_projector(replace_embedding.squeeze())
+
+        # NOTE fix bug, need interaction
+        # (bf, 1, 1280) -> (b, f*1280)
+        replace_embedding = rearrange(replace_embedding, '(b f) l d -> b (f l d)', b=batch_size)
+
+        replace_embedding = self.add_embedding_projector(replace_embedding)
+        replace_embedding = rearrange(replace_embedding, 'b (f d) -> (b f) d', f=num_frames)
         
         clip_embedding = replace_embedding[:, None] # (b*f, l, d)
 

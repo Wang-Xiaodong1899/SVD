@@ -14,7 +14,7 @@
 # t_video, t_action -> embedder -> [temb_video, temb_action]
 # a branch output action logits, MLP output layer, attention with video
 
-
+# same timesteps
 
 
 
@@ -50,7 +50,7 @@ sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
-from diffusers.models.unet_action_joint import UNetSpatioTemporalConditionModel_Action
+from diffusers.models.unet_action_joint_same_t import UNetSpatioTemporalConditionModel_Action
 
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
@@ -986,10 +986,6 @@ def main():
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
                 timesteps = timesteps.long()
 
-                # Sample a random timestep for action
-                timesteps_extra = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
-                timesteps_extra = timesteps_extra.long()
-
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 if args.input_perturbation:
@@ -1024,7 +1020,7 @@ def main():
 
                 # NOTE add noise
                 noise_extra = torch.randn_like(future_action)
-                noisy_action = noise_scheduler.add_noise(future_action, noise_extra, timesteps_extra)
+                noisy_action = noise_scheduler.add_noise(future_action, noise_extra, timesteps)
 
                 # Fix bug
                 # concat with noisy_action
@@ -1034,7 +1030,7 @@ def main():
                 # added_time_ids = torch.stack([fps, steers, speeds], dim=-1) # b, f, 3
 
                 # Predict the noise residual and compute loss
-                model_pred, action_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context, clip_embedding=clip_embedding, timestep_extra=timesteps_extra, history_len=args.history_len)
+                model_pred, action_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context, clip_embedding=clip_embedding, history_len=args.history_len)
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
