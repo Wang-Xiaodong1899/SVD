@@ -16,7 +16,7 @@ from einops import repeat
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
-DATAROOT = '/mnt/lustrenew/wangxiaodong/data/nuscene'
+DATAROOT = '/mnt/afs/dataset/nuscenes'
 
 # NOTE
 # support history action 
@@ -149,7 +149,7 @@ def _gaussian_blur2d(input, kernel_size, sigma):
 # default image size 256x512
 
 class Actionframes(Dataset):
-    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', history_len = 4, max_video_len = 8, img_size=(256,512)):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', history_len = 8, max_video_len = 8, img_size=(256,512)):
         super().__init__()
         self.tokenizer = tokenizer
         self.args = args
@@ -175,7 +175,7 @@ class Actionframes(Dataset):
         self.clip_resize = transforms.Resize(clip_size)
 
         # read from json
-        json_path = f'/mnt/lustrenew/wangxiaodong/data/nuscene/scene_action_file_{split}.json'
+        json_path = f'/mnt/afs/user/wangxiaodong/driving-world-models/SDM/scene_action_file_{split}.json'
         with open(json_path, 'r') as f:
             self.scene_action = json.load(f)
         
@@ -183,7 +183,7 @@ class Actionframes(Dataset):
         print('Total Scene: %d' % len(self.scene_action))
 
         # utime-caption
-        json_path = f'/mnt/lustrenew/wangxiaodong/data/nuscene/nuscene_caption_utime_{split}.json'
+        json_path = f'/mnt/afs/user/wangxiaodong/driving-world-models/SDM/nuscene_caption_utime_{split}.json'
         with open(json_path, 'r') as f:
             self.caption_utime = json.load(f)
     
@@ -218,7 +218,7 @@ class Actionframes(Dataset):
             seek_steer = torch.tensor(seek_angle) # default [-9, 9]
             seek_speed = torch.tensor(seek_speed) / 10 # maybe [0, 160]
 
-            first_image_path = seek_path[0]
+            first_image_path = seek_path[self.history_len]
             utime = first_image_path.split('__')[-1].split('.')[0]
             first_image_caption = self.caption_utime[utime]
 
@@ -230,7 +230,7 @@ class Actionframes(Dataset):
             if video.shape[0] < self.max_video_len:
                 video = torch.cat((video, repeat(video[-1], 'c h w -> n c h w',
                                                  n=self.max_video_len - video.shape[0])), dim=0)
-            imgs = video[:self.max_video_len]
+            imgs = video[-self.max_video_len:]
 
             clip_video = imgs # n c h w
             clip_video = _resize_with_antialiasing(clip_video, (224, 224))

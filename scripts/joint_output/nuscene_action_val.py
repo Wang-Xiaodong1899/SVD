@@ -16,7 +16,7 @@ from einops import repeat
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
-DATAROOT = '/mnt/lustrenew/wangxiaodong/data/nuscene'
+DATAROOT = '/mnt/afs/dataset/nuscenes'
 
 def image2pil(filename):
     return Image.open(filename)
@@ -156,7 +156,7 @@ class Actionframes(Dataset):
         clip_size = (224, 224)
 
         # read from json
-        json_path = f'/mnt/lustrenew/wangxiaodong/data/nuscene/scene_action_file_{split}.json'
+        json_path = f'/mnt/afs/user/wangxiaodong/driving-world-models/SDM/scene_action_file_{split}.json'
         with open(json_path, 'r') as f:
             self.scene_action = json.load(f)
         
@@ -164,7 +164,7 @@ class Actionframes(Dataset):
         print('Total Scene: %d' % len(self.scene_action))
 
         # utime-caption
-        json_path = f'/mnt/lustrenew/wangxiaodong/data/nuscene/nuscene_caption_utime_{split}.json'
+        json_path = f'/mnt/afs/user/wangxiaodong/driving-world-models/SDM/nuscene_caption_utime_{split}.json'
         with open(json_path, 'r') as f:
             self.caption_utime = json.load(f)
     
@@ -200,15 +200,15 @@ class Actionframes(Dataset):
 
             print(f'seek_steer: {seek_steer}\n seek_speed: {seek_speed}')
 
-            first_image_path = seek_path[0]
+            first_image_path = seek_path[self.history_len]
             utime = first_image_path.split('__')[-1].split('.')[0]
             first_image_caption = self.caption_utime[utime]
 
             frame_paths = [os.path.join(DATAROOT, file_path) for file_path in seek_path]
             video = np.stack([image2arr(fn) for fn in frame_paths]) # (f, h, w, 3)
-            img = image2arr(frame_paths[0]) # first image
+            img = image2arr(frame_paths[self.history_len]) # first image
 
-            video = video[:self.max_video_len]
+            video = video[-self.max_video_len:]
 
             # suppose use caption for first sample
             inputs = self.tokenizer(
@@ -219,7 +219,7 @@ class Actionframes(Dataset):
             return {
                 'input_ids': inputs_id,
                 'video': video,
-                'pil': img,
+                'pil': img, # debug here use 8th image
                 'steer': seek_steer,
                 'speed': seek_speed,
                 'caption': first_image_caption,
