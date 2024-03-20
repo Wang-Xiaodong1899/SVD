@@ -43,7 +43,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
+sys.path.append('/mnt/afs/user/wangxiaodong/driving-world-models/SDM/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
@@ -55,7 +55,7 @@ from diffusers.utils import check_min_version, deprecate, is_wandb_available, ma
 from diffusers.utils.import_utils import is_xformers_available
 
 
-from nuscene_action import Actionframes
+from nuscene_video import Actionframes
 from safetensors import safe_open
 from collections import OrderedDict
 
@@ -207,14 +207,14 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/home/wxd/video-generation/diffusers/examples/text_to_image/drive-s256-ep40",
+        default="/mnt/afs/user/wangxiaodong/driving-world-models/SDM/smodels/image-ep50-s192-1e-4",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--pretrained_clip_model_name_or_path",
         type=str,
-        default="/mnt/lustrenew/wangxiaodong/models/clip-vit-large-patch14",
+        default="/mnt/afs/user/wangxiaodong/driving-world-models/SDM/smodels/clip-vit-large-patch14",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -513,6 +513,29 @@ def parse_args():
             "image clip embedding type, pooler_output, last_hidden_state"
         ),
     )
+    parser.add_argument(
+        "--history_len",
+        type=int,
+        default=8,
+        help="history context"
+    )
+    parser.add_argument(
+        "--ac_beta",
+        type=float,
+        default=0.01,
+        help="beta for action loss"
+    )
+    parser.add_argument(
+        "--ckpt",
+        type=str,
+        default=None,
+        help="resume checkpoint path"
+    )
+    parser.add_argument(
+        "--stop_action_grad",
+        action="store_true",
+        help="Whether or not to stop action branch gradient",
+    )
 
 
     args = parser.parse_args()
@@ -533,7 +556,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels-vis', args.output_dir)
+    args.output_dir = os.path.join('/mnt/afs/user/wangxiaodong/driving-world-models/SDM/smodels-vis', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
@@ -657,6 +680,17 @@ def main():
         pass
         print('miss_keys: ', miss_keys)
         print('ignore_keys: ', ignore_keys)
+    del new_state_dicts
+    
+    # resume from previous checkpoint
+    if args.ckpt:
+        resume_tensors = {}
+        with safe_open(os.path.join(args.ckpt, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
+            for k in f.keys():
+                resume_tensors[k] = f.get_tensor(k)
+        unet.load_state_dict(resume_tensors, strict=False)
+        print(f'loaded weights from {args.ckpt}')
+        del resume_tensors
 
     optimize_param = []
 
