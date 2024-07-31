@@ -16,7 +16,7 @@ from einops import repeat
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
-DATAROOT = '/mnt/lustrenew/wangxiaodong/data/nuscene'
+DATAROOT = '/mnt/storage/user/wangxiaodong/nuscenes'
 
 def image2pil(filename):
     return Image.open(filename)
@@ -157,9 +157,7 @@ class Actionframes(Dataset):
         # image transform
         self.transform = transforms.Compose([
                 transforms.ToPILImage('RGB'),
-                transforms.RandomResizedCrop(img_size, scale=(0.8, 1.), ratio=(1., 1.777778)),
-                # transforms.RandomHorizontalFlip(p=0.1),
-                transforms.ColorJitter(brightness=0.05, contrast=0.15, saturation=0.15),
+                transforms.Resize(img_size),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
             ])
@@ -170,7 +168,7 @@ class Actionframes(Dataset):
         self.clip_resize = transforms.Resize(clip_size)
 
         # read from json
-        json_path = f'/mnt/lustrenew/wangxiaodong/data/nuscene/scene_action_file_{split}.json'
+        json_path = f'/mnt/storage/user/wangxiaodong/nuscenes/scene_action_file_{split}.json'
         with open(json_path, 'r') as f:
             self.scene_action = json.load(f)
         
@@ -178,7 +176,7 @@ class Actionframes(Dataset):
         print('Total Scene: %d' % len(self.scene_action))
 
         # utime-caption
-        json_path = f'/mnt/lustrenew/wangxiaodong/data/nuscene/nuscene_caption_utime_{split}.json'
+        json_path = f'/mnt/storage/user/wangxiaodong/nuscenes/nuscene_caption_utime_{split}.json'
         with open(json_path, 'r') as f:
             self.caption_utime = json.load(f)
     

@@ -2,8 +2,8 @@
 # This file is for aliyun 1-GPU test
 
 import sys
-sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/src')
-sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug')
+sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/src')
+sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD')
 
 import os
 import torch
@@ -20,23 +20,23 @@ from safetensors import safe_open
 from diffuser.utils import export_to_video
 
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection, CLIPModel
-from diffuser.models.unet_action_v3_0 import UNetSpatioTemporalConditionModel_Action
+from diffuser.models.unet_action_v4_0 import UNetSpatioTemporalConditionModel_Action
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel, DDIMScheduler
 from diffuser.pipelines.stable_video_diffusion.pipeline_action_to_video_diffusion_v2 import ActionVideoDiffusionPipeline
 
-from scripts.action_to_video.nuscene_action_val import Actionframes
+from scripts.action_to_video.nuscene_action_emb_val import Actionframes
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/action_v3_noaug/checkpoint-10000', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels-vis/action_v4/checkpoint-10000', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
-                '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep50-s192-1e-4', subfolder="text_encoder"
+                '/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/image-ep50-s192-1e-4', subfolder="text_encoder"
     )
     vae = AutoencoderKL.from_pretrained(
-                '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep50-s192-1e-4', subfolder="vae"
+                '/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/image-ep50-s192-1e-4', subfolder="vae"
     )
     clip_model = CLIPModel.from_pretrained(
-        "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/clip-vit-large-patch14", torch_dtype=torch.float16)
+        "/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/clip-vit-large-patch14", torch_dtype=torch.float16)
 
     text_encoder.eval()
     vae.eval()
@@ -45,9 +45,9 @@ def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/
     vae.to(device)
     clip_model.to(device)
 
-    tokenizer = CLIPTokenizer.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep50-s192-1e-4', subfolder="tokenizer")
-    scheduler = DDIMScheduler.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep50-s192-1e-4', subfolder="scheduler")
-    feature_extractor = CLIPImageProcessor.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep50-s192-1e-4', subfolder="feature_extractor")
+    tokenizer = CLIPTokenizer.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/image-ep50-s192-1e-4', subfolder="tokenizer")
+    scheduler = DDIMScheduler.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/image-ep50-s192-1e-4', subfolder="scheduler")
+    feature_extractor = CLIPImageProcessor.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/image-ep50-s192-1e-4', subfolder="feature_extractor")
 
     unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style = "image")
     if "unet" not in os.listdir(pretrained_model_name_or_path):
@@ -90,17 +90,15 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
     return generated_caption[0]
 
 def main(
-    pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/action_v3_noaug/checkpoint-10000',
-    num_frames = 36,
-    root_dir = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/FVD-first',
+    pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels-vis/action_v4/checkpoint-10000',
+    num_frames = 8,
+    root_dir = '/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/FVD-first',
     train_frames = 8,
     device='cuda',
-    roll_out= 5,
+    roll_out= 1,
     cfg_min = 1.0,
     cfg_max = 1.0,
     steps = 25,
-    ignore_action=False,
-    ignore_image_context=False
 ):
     pipeline, tokenizer = load_models(pretrained_model_name_or_path, device)
 
@@ -130,8 +128,8 @@ def main(
     os.makedirs(os.path.join(root_dir, version), exist_ok=True)
 
     # caption model
-    # git_processor_large = AutoProcessor.from_pretrained("/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/git-large-coco")
-    # git_model_large = AutoModelForCausalLM.from_pretrained("/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/git-large-coco")
+    # git_processor_large = AutoProcessor.from_pretrained("/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/git-large-coco")
+    # git_model_large = AutoModelForCausalLM.from_pretrained("/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/git-large-coco")
     # print('loaded caption model!')
 
     new_batch = []
@@ -142,7 +140,7 @@ def main(
         # if n>10:
         #     break
 
-        video = pipeline(batch, num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps, ignore_action=ignore_action, ignore_image_context=ignore_image_context).frames
+        video = pipeline(batch, num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps).frames
 
         names = batch['name']
         scenes = batch['scene']
@@ -168,7 +166,7 @@ def main(
 
             print(curr_prompt)
 
-            video_ex = pipeline(curr_batch, image=[curr_frame], prompt=[curr_prompt], num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps, ignore_action=ignore_action, ignore_image_context=ignore_image_context).frames
+            video_ex = pipeline(curr_batch, image=[curr_frame], prompt=[curr_prompt], num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps).frames
             video[0] = video[0] + video_ex[0][1:]
         print(f'len of final video {len(video)}')
         

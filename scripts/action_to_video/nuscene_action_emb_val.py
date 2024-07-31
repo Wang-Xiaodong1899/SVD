@@ -18,10 +18,6 @@ from nuscenes.utils.splits import create_splits_scenes
 
 DATAROOT = '/mnt/storage/user/wangxiaodong/nuscenes'
 
-# NOTE
-# support history action 
-
-
 def image2pil(filename):
     return Image.open(filename)
 
@@ -145,25 +141,30 @@ def _gaussian_blur2d(input, kernel_size, sigma):
 
     return out
 
+def normalize_func(tensor, min_val=0, max_val=200):
+    # normalize to [-1, 1]
+    normalized_tensor = (tensor - min_val) / (max_val - min_val)
+    normalized_tensor = normalized_tensor * 2 - 1
+    return normalized_tensor
+
+def denormalize_func(normalized_tensor, min_val=0, max_val=200):
+    tensor = (normalized_tensor + 1) / 2
+    tensor = tensor * (max_val - min_val) + min_val
+    # tensor = t.round(tensor).long()
+    return tensor
+
 
 # default image size 256x512
 
 class Actionframes(Dataset):
-    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='val', history_len = 8, max_video_len = 8, img_size=(256,512)):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='val', max_video_len = 8, img_size=(256,512)):
         super().__init__()
         self.tokenizer = tokenizer
         self.args = args
         self.split = split
         self.max_video_len = max_video_len
-        self.history_len = history_len
         self.action_scale = 1
         clip_size = (224, 224)
-
-        self.transform = transforms.Compose([
-                transforms.Resize(img_size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-            ])
 
         # read from json
         json_path = f'/mnt/storage/user/wangxiaodong/nuscenes/scene_action_file_{split}.json'
@@ -200,27 +201,30 @@ class Actionframes(Dataset):
 
             seek_start = 0
 
-            seek_angle = angles[seek_start: seek_start+self.max_video_len+self.history_len]
-            seek_speed = speeds[seek_start: seek_start+self.max_video_len+self.history_len]
-            seek_path = files[seek_start: seek_start+self.max_video_len+self.history_len]
+            seek_angle = angles[seek_start: seek_start+self.max_video_len]
+            seek_speed = speeds[seek_start: seek_start+self.max_video_len]
+            seek_path = files[seek_start: seek_start+self.max_video_len]
 
             # transfer
-            seek_steer = torch.tensor(seek_angle) # default [-9, 9]
-            seek_speed = torch.tensor(seek_speed) / 3.6 # maybe [0, 160]
+            seek_steer = torch.tensor(seek_angle) # default
+            seek_speed = torch.tensor(seek_speed)
 
-            # print(f'seek_steer: {seek_steer}\n seek_speed: {seek_speed}')
+            seek_steer_inp = torch.round(seek_steer * 10 + 90).long()
+            seek_speed_inp = torch.round(seek_speed * 10).long()
 
-            first_image_path = seek_path[self.history_len]
+
+            first_image_path = seek_path[0]
             utime = first_image_path.split('__')[-1].split('.')[0]
             first_image_caption = self.caption_utime[utime]
 
+            utimes = [p.split('__')[-1].split('.')[0] for p in seek_path]
+            captions = [self.caption_utime[ut] for ut in utimes]
+
             frame_paths = [os.path.join(DATAROOT, file_path) for file_path in seek_path]
             video = np.stack([image2arr(fn) for fn in frame_paths]) # (f, h, w, 3)
-            img = image2arr(frame_paths[self.history_len]) # first image
+            img = image2arr(frame_paths[0]) # first image
 
-            im = self.transform(image2pil(frame_paths[self.history_len]))
-
-            video = video[-self.max_video_len:]
+            video = video[:self.max_video_len]
 
             # suppose use caption for first sample
             inputs = self.tokenizer(
@@ -231,13 +235,13 @@ class Actionframes(Dataset):
             return {
                 'input_ids': inputs_id,
                 'video': video,
-                'pil': img, # debug here use 8th image
-                'image': im,
-                'steer': seek_steer,
-                'speed': seek_speed,
+                'pil': img,
+                'steer': seek_steer_inp,
+                'speed': seek_speed_inp,
                 'caption': first_image_caption,
                 'name': os.path.basename(first_image_path),
-                'scene': my_scene
+                'scene': my_scene,
+                'captions': captions
             }
             
         except Exception as e:

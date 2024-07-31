@@ -18,10 +18,6 @@ from nuscenes.utils.splits import create_splits_scenes
 
 DATAROOT = '/mnt/storage/user/wangxiaodong/nuscenes'
 
-# NOTE
-# support history action 
-
-
 def image2pil(filename):
     return Image.open(filename)
 
@@ -149,21 +145,27 @@ def _gaussian_blur2d(input, kernel_size, sigma):
 # default image size 256x512
 
 class Actionframes(Dataset):
-    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='val', history_len = 8, max_video_len = 8, img_size=(256,512)):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', history_len = 8, max_video_len = 8, img_size=(192, 384)):
         super().__init__()
         self.tokenizer = tokenizer
         self.args = args
         self.split = split
         self.max_video_len = max_video_len
-        self.history_len = history_len
         self.action_scale = 1
         clip_size = (224, 224)
 
+        # image transform
         self.transform = transforms.Compose([
+                transforms.ToPILImage('RGB'),
                 transforms.Resize(img_size),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
             ])
+        
+        self.clip_transform = transforms.Normalize(
+                transformers.image_utils.OPENAI_CLIP_MEAN,
+                transformers.image_utils.OPENAI_CLIP_STD)
+        self.clip_resize = transforms.Resize(clip_size)
 
         # read from json
         json_path = f'/mnt/storage/user/wangxiaodong/nuscenes/scene_action_file_{split}.json'
@@ -198,29 +200,58 @@ class Actionframes(Dataset):
             angles = angles[:mini_len]
             speeds = speeds[:mini_len]
 
-            seek_start = 0
+            if self.split == 'train':
+                # start from history_len
+                seek_start = random.randint(0, mini_len - self.args.max_seq_len)
+                seek_angle = angles[seek_start: seek_start+self.args.max_video_len+self.args.history_len]
+                seek_speed = speeds[seek_start: seek_start+self.args.max_video_len+self.args.history_len]
+                seek_path = files[seek_start: seek_start+self.args.max_video_len+self.args.history_len]
+            else:
+                seek_start = 0
+                seek_angle = angles[seek_start: self.args.valid_max_video_len]
+                seek_speed = speeds[seek_start: self.args.valid_max_video_len]
+                seek_path = files[seek_start: self.args.valid_max_video_len]
 
-            seek_angle = angles[seek_start: seek_start+self.max_video_len+self.history_len]
-            seek_speed = speeds[seek_start: seek_start+self.max_video_len+self.history_len]
-            seek_path = files[seek_start: seek_start+self.max_video_len+self.history_len]
+            seek_angle_ms = torch.tensor(seek_angle) # default [-9, 9]
+            seek_speed_ms = torch.tensor(seek_speed) / 3.6
 
-            # transfer
-            seek_steer = torch.tensor(seek_angle) # default [-9, 9]
-            seek_speed = torch.tensor(seek_speed) / 3.6 # maybe [0, 160]
+            # NOTE we skip 8 action
+            src_action_len = len(seek_angle_ms) - 1 # leave for bos
+            tgt_action_len = len(seek_angle_ms)
+            attention_mask = [1] * (1 + src_action_len) + [0] * (self.args.max_seq_len - len(seek_angle_ms) - 1) # start with bos embed
+            loss_mask = [0] * self.args.history_len + [1] * (tgt_action_len - self.args.history_len) + [0] * (self.args.max_seq_len - len(seek_angle_ms))
 
-            # print(f'seek_steer: {seek_steer}\n seek_speed: {seek_speed}')
+            utimes = [p.split('__')[-1].split('.')[0] for p in seek_path]
+            captions = [self.caption_utime[ut] for ut in utimes]
 
-            first_image_path = seek_path[self.history_len]
+            first_image_path = seek_path[0]
             utime = first_image_path.split('__')[-1].split('.')[0]
             first_image_caption = self.caption_utime[utime]
 
             frame_paths = [os.path.join(DATAROOT, file_path) for file_path in seek_path]
-            video = np.stack([image2arr(fn) for fn in frame_paths]) # (f, h, w, 3)
-            img = image2arr(frame_paths[self.history_len]) # first image
+            video = np.stack([image2arr(fn) for fn in frame_paths])
 
-            im = self.transform(image2pil(frame_paths[self.history_len]))
+            img = image2arr(frame_paths[0]) # first image
 
-            video = video[-self.max_video_len:]
+            state = torch.get_rng_state()
+            video = torch.stack([self.augmentation(v, self.transform, state) for v in video], dim=0)
+            # if video.shape[0] < self.max_video_len:
+            #     video = torch.cat((video, repeat(video[-1], 'c h w -> n c h w',
+            #                                      n=self.max_video_len - video.shape[0])), dim=0)
+            # imgs = video[-(self.args.max_video_len+self.args.video_offset)+1:] # NOTE need last frames
+            imgs = video[: self.args.history_len]
+
+            # NOTE take correct caption
+            # print(f'caption length: {len(captions)}')
+            # print(f'max_video: {}')
+            # print(f'idx: {-(self.args.max_video_len+self.args.video_offset)}')
+            # first_image_caption = captions[-(self.args.max_video_len+self.args.video_offset)+1] 
+            first_image_caption = captions[0]
+
+            clip_video = imgs # n c h w
+            clip_video = _resize_with_antialiasing(clip_video, (224, 224))
+            clip_video = (clip_video + 1.0) / 2.0 # -> (0, 1)
+            clip_video = self.clip_transform(clip_video)
 
             # suppose use caption for first sample
             inputs = self.tokenizer(
@@ -230,14 +261,17 @@ class Actionframes(Dataset):
 
             return {
                 'input_ids': inputs_id,
-                'video': video,
-                'pil': img, # debug here use 8th image
-                'image': im,
-                'steer': seek_steer,
-                'speed': seek_speed,
+                'label_imgs': imgs,
+                'pil': img,
+                'steer': seek_angle_ms,
+                'speed': seek_speed_ms,
+                'clip_imgs': clip_video,
                 'caption': first_image_caption,
                 'name': os.path.basename(first_image_path),
-                'scene': my_scene
+                'scene': my_scene,
+                'attention_mask': torch.Tensor(attention_mask).to(torch.float),
+                'loss_mask': torch.Tensor(loss_mask).to(torch.float),
+                'captions': captions
             }
             
         except Exception as e:

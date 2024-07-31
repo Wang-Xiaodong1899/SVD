@@ -16,7 +16,7 @@ from einops import repeat
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
-DATAROOT = '/mnt/lustrenew/wangxiaodong/data/nuscene'
+DATAROOT = '/mnt/storage/user/wangxiaodong/nuscenes'
 
 def image2pil(filename):
     return Image.open(filename)
@@ -155,7 +155,7 @@ class Actionframes(Dataset):
         clip_size = (224, 224)
 
         # read from json
-        json_path = f'/mnt/lustrenew/wangxiaodong/data/nuscene/scene_action_file_{split}.json'
+        json_path = f'/mnt/storage/user/wangxiaodong/nuscenes/scene_action_file_{split}.json'
         with open(json_path, 'r') as f:
             self.scene_action = json.load(f)
         
@@ -163,7 +163,7 @@ class Actionframes(Dataset):
         print('Total Scene: %d' % len(self.scene_action))
 
         # utime-caption
-        json_path = f'/mnt/lustrenew/wangxiaodong/data/nuscene/nuscene_caption_utime_{split}.json'
+        json_path = f'/mnt/storage/user/wangxiaodong/nuscenes/nuscene_caption_utime_{split}.json'
         with open(json_path, 'r') as f:
             self.caption_utime = json.load(f)
     
@@ -201,6 +201,9 @@ class Actionframes(Dataset):
             utime = first_image_path.split('__')[-1].split('.')[0]
             first_image_caption = self.caption_utime[utime]
 
+            utimes = [p.split('__')[-1].split('.')[0] for p in seek_path]
+            captions = [self.caption_utime[ut] for ut in utimes]
+
             frame_paths = [os.path.join(DATAROOT, file_path) for file_path in seek_path]
             video = np.stack([image2arr(fn) for fn in frame_paths]) # (f, h, w, 3)
             img = image2arr(frame_paths[0]) # first image
@@ -221,7 +224,8 @@ class Actionframes(Dataset):
                 'speed': seek_speed,
                 'caption': first_image_caption,
                 'name': os.path.basename(first_image_path),
-                'scene': my_scene
+                'scene': my_scene,
+                'captions': captions
             }
             
         except Exception as e:

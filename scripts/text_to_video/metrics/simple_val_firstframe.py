@@ -2,7 +2,7 @@
 # This file is for aliyun 1-GPU test
 
 import sys
-sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
+sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/src')
 
 import os
 import torch
@@ -21,19 +21,19 @@ from diffusers.utils import export_to_video
 
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
 # from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
-from diffusers.models.unet_action import UNetSpatioTemporalConditionModel_Action
-from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
-from diffusers.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v1 import ActionVideoDiffusionPipeline
+from diffuser.models.unet_action import UNetSpatioTemporalConditionModel_Action
+from diffuser import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
+from diffuser.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v1 import ActionVideoDiffusionPipeline
 # fix fps=3
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/im192-video-v01-ep100-s192-5e-5', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/im192-video-v01-ep100-s192-1e-4', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
-                '/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="text_encoder"
+                '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep100', subfolder="text_encoder"
     )
     vae = AutoencoderKL.from_pretrained(
-                '/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="vae"
+                '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep100', subfolder="vae"
     )
 
     text_encoder.eval()
@@ -41,9 +41,9 @@ def load_models(pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smo
     text_encoder.to(device)
     vae.to(device)
 
-    tokenizer = CLIPTokenizer.from_pretrained('/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="tokenizer")
-    scheduler = DDPMScheduler.from_pretrained('/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="scheduler")
-    feature_extractor = CLIPImageProcessor.from_pretrained('/mnt/lustrenew/wangxiaodong/smodels/image-ep50-ddp', subfolder="feature_extractor")
+    tokenizer = CLIPTokenizer.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep100', subfolder="tokenizer")
+    scheduler = DDPMScheduler.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep100', subfolder="scheduler")
+    feature_extractor = CLIPImageProcessor.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep100', subfolder="feature_extractor")
 
     unet = UNetSpatioTemporalConditionModel_Action.from_pretrained(pretrained_model_name_or_path, subfolder="unet")
     unet.eval()
@@ -72,9 +72,9 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
     return generated_caption[0]
 
 def main(
-    pretrained_model_name_or_path = '/mnt/lustrenew/wangxiaodong/smodels-vis/im192-video-v01-ep100-s192-5e-5',
-    num_frames = 15,
-    root_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/FVD-first',
+    pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/im192-video-v01-ep100-s192-1e-4',
+    num_frames = 36,
+    root_dir = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/FVD-first',
     train_frames = 8,
     device='cuda:0'
 ):
@@ -86,16 +86,16 @@ def main(
 
     print('loaded pipeline!')
     
-    meta_data = json2data('/mnt/lustrenew/wangxiaodong/data/nuscene/samples_group_sort_val.json')
-    files_dir = '/mnt/lustrenew/wangxiaodong/data/nuscene/val_group'
+    meta_data = json2data('/mnt/storage/user/wangxiaodong/nuscenes/samples_group_sort_val.json')
+    files_dir = '/mnt/storage/user/wangxiaodong/nuscenes/val_group'
 
     version = os.path.basename(pretrained_model_name_or_path)
 
     os.makedirs(os.path.join(root_dir, version), exist_ok=True)
 
     # caption model
-    git_processor_large = AutoProcessor.from_pretrained("/mnt/lustrenew/wangxiaodong/models/git-large-coco")
-    git_model_large = AutoModelForCausalLM.from_pretrained("/mnt/lustrenew/wangxiaodong/models/git-large-coco")
+    git_processor_large = AutoProcessor.from_pretrained("/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/git-large-coco")
+    git_model_large = AutoModelForCausalLM.from_pretrained("/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/git-large-coco")
     print('loaded caption model!')
 
     for item in tqdm(meta_data):
@@ -123,6 +123,22 @@ def main(
             print(f'len of final video {len(video)}')
         
         if num_frames> 2*train_frames:
+            last_frame = video[-1]
+            prompt = generate_caption(last_frame, git_processor_large, git_model_large)
+            video_3 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
+            print(f'len of third {len(video)}')
+            video = video + video_3[1:]
+            print(f'len of final video {len(video)}')
+        
+        if num_frames> 3*train_frames:
+            last_frame = video[-1]
+            prompt = generate_caption(last_frame, git_processor_large, git_model_large)
+            video_3 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]
+            print(f'len of third {len(video)}')
+            video = video + video_3[1:]
+            print(f'len of final video {len(video)}')
+        
+        if num_frames> 4*train_frames:
             last_frame = video[-1]
             prompt = generate_caption(last_frame, git_processor_large, git_model_large)
             video_3 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=192, width=384).frames[0]

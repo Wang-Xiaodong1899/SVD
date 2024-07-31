@@ -26,14 +26,19 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPV
 
 from ...image_processor import VaeImageProcessor
 from ...models import AutoencoderKL
-from diffusers.models.unet_action_v2_0 import UNetSpatioTemporalConditionModel_Action
 from ...schedulers import KarrasDiffusionSchedulers
 from ...utils import BaseOutput, logging
 from ...utils.torch_utils import randn_tensor
 from ..pipeline_utils import DiffusionPipeline
 
+# import model
+from diffuser.models.unet_dwm import UNetSpatioTemporalConditionModel_Action
+from llama.attention_ngram_dwm import LlamaModeling
+
 from PIL import Image
 from diffusers.utils import export_to_video
+
+from einops import rearrange
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -74,6 +79,7 @@ class ActionVideoDiffusionPipelineOutput(BaseOutput):
     """
 
     frames: Union[List[PIL.Image.Image], np.ndarray]
+    actions: torch.tensor
 
 
 class ActionVideoDiffusionPipeline(DiffusionPipeline):
@@ -108,7 +114,8 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         scheduler: KarrasDiffusionSchedulers,
         feature_extractor: CLIPImageProcessor,
         image_encoder: CLIPVisionModelWithProjection = None,
-        clip_model: CLIPModel = None
+        clip_model: CLIPModel = None,
+        action_model = None
     ):
         super().__init__()
 
@@ -120,7 +127,8 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
             scheduler=scheduler,
             feature_extractor=feature_extractor,
             image_encoder=image_encoder,
-            clip_model=clip_model
+            clip_model=clip_model,
+            action_model=action_model
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
@@ -326,6 +334,12 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         action: torch.FloatTensor = None,
         image_context: torch.FloatTensor = None,
         prompt: Union[str, List[str]] = None,
+        history_len: int = 4,
+        prediction_scope: int = 4,
+        n_gram: int = 4,
+        action_start: int = 0,
+        action_end: int = 4,
+        action_only: bool = False,
     ):
         # 0. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
@@ -353,7 +367,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         
         print(prompt)
 
-        ground_truth = batch['video'] # np dtype
+        ground_truth = batch['label_imgs'] # np dtype
 
         # 2. Define call parameters
         if isinstance(image, PIL.Image.Image):
@@ -424,20 +438,79 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         # image_latents = image_latents.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
         # no unsqueeze and repeat here for action 
 
-        # 5. action added_time_ids
-        steers = batch['steer'][:, :num_frames] # b, f
-        speeds = batch['speed'][:, :num_frames] # b, f
-        fps = torch.ones_like(speeds) * 2
+        # 5. prepare action embedding
+        # align with training, cause we need known action embedding
+        if action is None:
+            steers = batch['steer'] # b, f
+            speeds = batch['speed'] # b, f
+            action = torch.stack([steers, speeds], dim=-1) # b, f, 2
+            # src_action = action[:, :-1].to(device) # b f-1 1
 
-        added_time_ids = torch.stack([fps, steers, speeds], dim=-1) # b, f, 3
-        added_time_ids = added_time_ids.to(device)
+        attention_mask = batch['attention_mask']
+
+        
+        
+        # cut src_action, hard code
+        # src_action = action[:, :history_len] # test history_len=4
+        # attention_mask = attention_mask[:, :history_len+1]
+
+        # NOTE may be not use action_start
+
+        # TODO use action_start and action_end
+        src_action = action[:, action_start: action_end] # NOTE should debug
+        attention_mask = attention_mask[:, action_start: action_end+1]
+
+        # TODO debug attention_mask, easy attention mask
+        attention_mask = torch.ones((src_action.shape[0], action_end-action_start+1))
+
+        src_action = src_action.to(device) # [1, 4, 2]
+        attention_mask = attention_mask.to(device) # [1, 5]
+
+        # import pdb
+        # pdb.set_trace()
+
+        # TODO check src_action
+        intermidates = self.action_model(src_action, attention_mask, None)
+        hidden_states = intermidates['hidden_states'] # b, (1+his), dim*4
+
+        logits = intermidates['logits'] # 
+
+        # NOTE add action number prediction
+        # <> 1,2,3,4 -> (5,6,7,8) so use the last token
+        # inter_hidden_states = hidden_states[:, -1, :]  # only keep the last token # [1, 4096]
+        # action_prediction = self.action_model.lm_head(inter_hidden_states) # b 1 2
+        logits = logits[:, -1:, :] # b 1 2*4
+
+        # import pdb
+        # pdb.set_trace()
+
+        if n_gram > 1: # b 1 ngram*2
+            action_prediction = logits.view(-1, n_gram, 2) #bsz, 4, 2
+        
+        if action_only:
+            return ActionVideoDiffusionPipelineOutput(frames=[], actions=action_prediction)
+
+        
+        # NOTE history and future action embedding
+        hs_bos_embed = self.action_model.hs_bos_embed # NOTE hs_bos_embed should have gradients
+        unet_input_list = [hs_bos_embed.repeat(batch_size, 1, 1)] # b 1 d
+        for idx in range(-4, -1):
+            hs = hidden_states[:, idx: idx+1, :]
+            hs = rearrange(hs, 'b l (d n) -> b l d n', n = 4) # n_gram=4
+            unet_input_list.append(hs[:, :, :, 0])
+        
+        hs = hidden_states[:, -1:, :]
+        hs = rearrange(hs, 'b l (d n) -> b l d n', n = 4)
+        for idx in range(4):
+            sub_hs = hs[:, :, :, idx]
+            unet_input_list.append(sub_hs)
+
+        unet_input_list = torch.cat(unet_input_list, dim = 1) # b f d
+
 
         # NOTE add CFG to action tokens
         if do_classifier_free_guidance:
-            added_time_ids = torch.cat([added_time_ids] * 2)
-
-        # # NOTE debug
-        # added_time_ids = torch.zeros_like(added_time_ids)
+            unet_input_list = torch.cat([unet_input_list] * 2)
 
         # 4. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
@@ -479,11 +552,12 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
                     latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds, # use text prompt here
-                    added_time_ids=added_time_ids,
+                    added_time_ids=None,
                     return_dict=False,
                     image_context=image_latents,
                     action=action,
-                    clip_embedding=image_embeddings
+                    clip_embedding=None,
+                    action_up_pred=unet_input_list
                 )[0]
 
                 # perform guidance
@@ -526,7 +600,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         if not return_dict:
             return frames
 
-        return ActionVideoDiffusionPipelineOutput(frames=frames)
+        return ActionVideoDiffusionPipelineOutput(frames=frames, actions=action_prediction)
 
 
 # resizing utils

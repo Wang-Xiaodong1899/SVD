@@ -42,16 +42,16 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/mnt/cache/wangxiaodong/SDM/src')
+sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/src')
 
-import diffusers
+import diffuser
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
-from diffusers.models.unet_action_v3_0 import UNetSpatioTemporalConditionModel_Action
+from diffuser.models.unet_action_v3_0 import UNetSpatioTemporalConditionModel_Action
 
-from diffusers.optimization import get_scheduler
-from diffusers.training_utils import EMAModel, compute_snr
-from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
-from diffusers.utils.import_utils import is_xformers_available
+from diffuser.optimization import get_scheduler
+from diffuser.training_utils import EMAModel, compute_snr
+from diffuser.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
+from diffuser.utils.import_utils import is_xformers_available
 
 
 from nuscene_action import Actionframes
@@ -213,7 +213,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_clip_model_name_or_path",
         type=str,
-        default="/mnt/lustrenew/wangxiaodong/models/clip-vit-large-patch14",
+        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/clip-vit-large-patch14",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -440,7 +440,7 @@ def parse_args():
     parser.add_argument(
         "--report_to",
         type=str,
-        default="tensorboard",
+        default="wandb",
         help=(
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
@@ -512,6 +512,15 @@ def parse_args():
             "image clip embedding type, pooler_output, last_hidden_state"
         ),
     )
+    # use_action
+    parser.add_argument(
+        "--delete_action",
+        action="store_true",
+        default=False,
+        help=(
+            "not using action"
+        ),
+    )
 
 
     args = parser.parse_args()
@@ -532,7 +541,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels-vis', args.output_dir)
+    args.output_dir = os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
@@ -564,11 +573,11 @@ def main():
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
-        diffusers.utils.logging.set_verbosity_info()
+        diffuser.utils.logging.set_verbosity_info()
     else:
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
-        diffusers.utils.logging.set_verbosity_error()
+        diffuser.utils.logging.set_verbosity_error()
 
     # If passed along, set the training seed now.
     if args.seed is not None:
@@ -619,7 +628,7 @@ def main():
 
         #NOTE add clip vision model
         clip_model = transformers.CLIPModel.from_pretrained(
-        args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
+            args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
 
 
     
@@ -830,7 +839,6 @@ def main():
     # Move text_encode and vae to gpu and cast to weight_dtype
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
-    unet.to(accelerator.device, dtype=weight_dtype)
     clip_model.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -927,16 +935,16 @@ def main():
 
                 # NOTE get image clip embedding
                 # first clip features
-                vision_output = clip_model.vision_model(
-                    batch["clip_imgs"][:, 0:1].flatten(0, 1)
-                    .to(latents.device, dtype=clip_model.dtype))
+                # vision_output = clip_model.vision_model(
+                #     batch["clip_imgs"][:, 0:1].flatten(0, 1)
+                #     .to(latents.device, dtype=clip_model.dtype))
                 
                 # ["pooler_output", "last_hidden_state"]
-                image_embedding_style = args.img_style
+                # image_embedding_style = args.img_style
 
-                clip_embedding = clip_model.visual_projection(vision_output[image_embedding_style]) # b 1 1024
-                clip_embedding = clip_embedding.view(bs, -1, clip_embedding.shape[-1])
-                
+                # clip_embedding = clip_model.visual_projection(vision_output[image_embedding_style]) # b 1 1024
+                # clip_embedding = clip_embedding.view(bs, -1, clip_embedding.shape[-1])
+                clip_embedding = None
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -978,6 +986,10 @@ def main():
                 steers = batch['steer'] # b, f
                 speeds = batch['speed'] # b, f
                 fps = torch.ones_like(speeds) * 2
+
+                if args.delete_action:
+                    steers = torch.ones_like(speeds) * 127
+                    speeds = torch.ones_like(speeds) * 0.02
 
                 added_time_ids = torch.stack([fps, steers, speeds], dim=-1) # b, f, 3
 

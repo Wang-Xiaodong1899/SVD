@@ -1,5 +1,5 @@
-# NOTE
-# First version Text-to-Image on Nuscenes Keyframes dataset
+#!/usr/bin/env python
+# coding=utf-8
 
 import argparse
 import logging
@@ -9,6 +9,7 @@ import random
 import shutil
 from pathlib import Path
 
+import json
 import accelerate
 import datasets
 import numpy as np
@@ -29,32 +30,42 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/src')
+sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/src')
 
-import diffusers
-from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
-from diffusers.optimization import get_scheduler
-from diffusers.training_utils import EMAModel, compute_snr
-from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
-from diffusers.utils.import_utils import is_xformers_available
 
-from nuscene_image import keyframes
+import diffuser
+from diffuser import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
 
+from llama.attention_custom_decomp import LlamaModeling
+
+from diffuser.optimization import get_scheduler
+from diffuser.training_utils import EMAModel, compute_snr
+from diffuser.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
+from diffuser.utils.import_utils import is_xformers_available
+
+
+from nuscene_action_llama_decomp import Actionframes
+
+from safetensors import safe_open
+from collections import OrderedDict
+
+from einops import rearrange, repeat
 
 if is_wandb_available():
     import wandb
+
+
+def numpy_serializable(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist() 
+    raise TypeError(f"{type(obj)} is not JSON serializable")
+
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.25.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
-
-DATASET_NAME_MAPPING = {
-    "lambdalabs/pokemon-blip-captions": ("image", "text"),
-    "/ssd_datasets/wxiaodong/naruto-blip-captions": ("image", "text"),
-}
-
 
 def save_model_card(
     args,
@@ -131,60 +142,6 @@ More information on all the CLI arguments and the environment are available on y
         f.write(yaml + model_card)
 
 
-def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, epoch):
-    logger.info("Running validation... ")
-
-    pipeline = StableDiffusionPipeline.from_pretrained(
-        args.pretrained_model_name_or_path,
-        vae=accelerator.unwrap_model(vae),
-        text_encoder=accelerator.unwrap_model(text_encoder),
-        tokenizer=tokenizer,
-        unet=accelerator.unwrap_model(unet),
-        safety_checker=None,
-        revision=args.revision,
-        variant=args.variant,
-        torch_dtype=weight_dtype,
-    )
-    pipeline = pipeline.to(accelerator.device)
-    pipeline.set_progress_bar_config(disable=True)
-
-    if args.enable_xformers_memory_efficient_attention:
-        pipeline.enable_xformers_memory_efficient_attention()
-
-    if args.seed is None:
-        generator = None
-    else:
-        generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-
-    images = []
-    for i in range(len(args.validation_prompts)):
-        with torch.autocast("cuda"):
-            image = pipeline(args.validation_prompts[i], num_inference_steps=20, generator=generator).images[0]
-
-        images.append(image)
-
-    for tracker in accelerator.trackers:
-        if tracker.name == "tensorboard":
-            np_images = np.stack([np.asarray(img) for img in images])
-            tracker.writer.add_images("validation", np_images, epoch, dataformats="NHWC")
-        elif tracker.name == "wandb":
-            tracker.log(
-                {
-                    "validation": [
-                        wandb.Image(image, caption=f"{i}: {args.validation_prompts[i]}")
-                        for i, image in enumerate(images)
-                    ]
-                }
-            )
-        else:
-            logger.warn(f"image logging not implemented for {tracker.name}")
-
-    del pipeline
-    torch.cuda.empty_cache()
-
-    return images
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument(
@@ -193,8 +150,14 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/stable-diffusion-v1-4",
+        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/image-ep50-s192-1e-4",
         required=True,
+        help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_clip_model_name_or_path",
+        type=str,
+        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/clip-vit-large-patch14",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -264,7 +227,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="sd-model-finetuned",
+        default="action-vae",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -298,7 +261,7 @@ def parse_args():
         help="whether to randomly flip images horizontally",
     )
     parser.add_argument(
-        "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
+        "--train_batch_size", type=int, default=14, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument("--num_train_epochs", type=int, default=100)
     parser.add_argument(
@@ -321,7 +284,7 @@ def parse_args():
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=1e-4,
+        default=5e-5,
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
@@ -340,7 +303,7 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--lr_warmup_steps", type=int, default=10, help="Number of steps for the warmup in the lr scheduler."
+        "--lr_warmup_steps", type=int, default=20, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument(
         "--snr_gamma",
@@ -389,7 +352,7 @@ def parse_args():
     parser.add_argument(
         "--prediction_type",
         type=str,
-        default=None,
+        default='v_prediction',
         help="The prediction_type that shall be used for training. Choose between 'epsilon' or 'v_prediction' or leave `None`. If left to `None` the default prediction type of the scheduler: `noise_scheduler.config.prediciton_type` is chosen.",
     )
     parser.add_argument(
@@ -431,7 +394,7 @@ def parse_args():
     parser.add_argument(
         "--checkpointing_steps",
         type=int,
-        default=100000,
+        default=10000000,
         help=(
             "Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"
             " training using `--resume_from_checkpoint`."
@@ -440,7 +403,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoints_total_limit",
         type=int,
-        default=4,
+        default=3,
         help=("Max number of checkpoints to store."),
     )
     parser.add_argument(
@@ -465,21 +428,77 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2i-ft-s192-e",
+        default="Llama_decomp_action_train",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
         ),
     )
     parser.add_argument(
-        "--drop_text", action="store_true", help="Whether or not drop text caption."
-    )
-    parser.add_argument(
-        "--drop_text_ratio",
+        "--drop_context",
         type=float,
         default=0.1,
-        help="text drop ratio",
+        help="ratio for drop image context"
     )
+    parser.add_argument(
+        "--temp_style",
+        type=str,
+        default="image",
+        help=(
+            "temp layer cross-attention information, text, text-image, image"
+        ),
+    )
+    parser.add_argument(
+        "--img_style",
+        type=str,
+        default="pooler_output",
+        help=(
+            "image clip embedding type, pooler_output, last_hidden_state"
+        ),
+    )
+    parser.add_argument(
+        "--history_len",
+        type=int,
+        default=8,
+        help="history context"
+    )
+    parser.add_argument(
+        "--ac_beta",
+        type=float,
+        default=0.01,
+        help="beta for action loss"
+    )
+    parser.add_argument(
+        "--ckpt",
+        type=str,
+        default=None,
+        help="resume checkpoint path"
+    )
+    parser.add_argument(
+        "--stop_action_grad",
+        action="store_true",
+        help="Whether or not to stop action branch gradient",
+    )
+    parser.add_argument(
+        "--loss",
+        default="l1",
+        help="l1 loss, l2 loss",
+    )
+    parser.add_argument(
+        "--eval_steps",
+        type=int,
+        default=50,
+        help=(
+            "eval training model frequency"
+        ),
+    )
+    parser.add_argument(
+        "--skip_image",
+        action="store_true",
+        help="Whether or not to skip image input as guidance",
+    )
+
+
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -496,11 +515,10 @@ def parse_args():
 
     return args
 
-
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels', args.output_dir)
+    args.output_dir = os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels-vis', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
@@ -532,11 +550,11 @@ def main():
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
-        diffusers.utils.logging.set_verbosity_info()
+        diffuser.utils.logging.set_verbosity_info()
     else:
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
-        diffusers.utils.logging.set_verbosity_error()
+        diffuser.utils.logging.set_verbosity_error()
 
     # If passed along, set the training seed now.
     if args.seed is not None:
@@ -553,7 +571,6 @@ def main():
             ).repo_id
 
     # Load scheduler, tokenizer and models.
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision
     )
@@ -578,28 +595,43 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        text_encoder = CLIPTextModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
-        )
-        vae = AutoencoderKL.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
-        )
+        # text_encoder = CLIPTextModel.from_pretrained(
+        #     args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
+        # )
+        if not args.skip_image:
+            vae = AutoencoderKL.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
+            )
 
-    unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant='fp16'
-        )
 
-    # Freeze vae and text_encoder and set unet to trainable
-    vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
-    unet.train()
+    # for action
+    from action_llama_decomp_config import LlamaConfig
+    config = LlamaConfig()
+    action_model = LlamaModeling(config)
+    action_model.train()
 
-    # Create EMA for the unet.
-    if args.use_ema:
-        ema_unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant='fp16'
-        )
-        ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
+    if args.ckpt:
+        # load checkpoint
+        action_model.load_state_dict(torch.load(args.ckpt, map_location='cpu'))
+        if accelerator.is_main_process:
+            print(f'loaded weights from {args.ckpt}')
+
+    # update action_model
+    optimize_param = []
+    for name, param in action_model.named_parameters():
+        param.requires_grad = True
+        optimize_param.append(param)
+
+    if not args.skip_image:
+        # Freeze vae and text_encoder and set unet to trainable
+        vae.requires_grad_(False)
+        vae.eval()
+
+    params = sum(p.numel() for p in action_model.parameters() if p.requires_grad)
+    params_in_million = params / 1e6  # M
+    if accelerator.is_main_process:
+        print(f"updated parameters: {params_in_million} M")
+
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -610,47 +642,12 @@ def main():
                 logger.warn(
                     "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
                 )
-            unet.enable_xformers_memory_efficient_attention()
+            action_model.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
 
-    # `accelerate` 0.16.0 will have better support for customized saving
-    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-        def save_model_hook(models, weights, output_dir):
-            if accelerator.is_main_process:
-                if args.use_ema:
-                    ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
-
-                for i, model in enumerate(models):
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
-
-                    # make sure to pop weight so that corresponding model is not saved again
-                    weights.pop()
-
-        def load_model_hook(models, input_dir):
-            if args.use_ema:
-                load_model = EMAModel.from_pretrained(os.path.join(input_dir, "unet_ema"), UNet2DConditionModel)
-                ema_unet.load_state_dict(load_model.state_dict())
-                ema_unet.to(accelerator.device)
-                del load_model
-
-            for i in range(len(models)):
-                # pop models so that they are not loaded again
-                model = models.pop()
-
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
-                model.register_to_config(**load_model.config)
-
-                model.load_state_dict(load_model.state_dict())
-                del load_model
-
-        accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook)
-
     if args.gradient_checkpointing:
-        unet.enable_gradient_checkpointing()
+        action_model.enable_gradient_checkpointing()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -662,21 +659,9 @@ def main():
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
 
-    # Initialize the optimizer
-    if args.use_8bit_adam:
-        try:
-            import bitsandbytes as bnb
-        except ImportError:
-            raise ImportError(
-                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
-            )
-
-        optimizer_cls = bnb.optim.AdamW8bit
-    else:
-        optimizer_cls = torch.optim.AdamW
-
+    optimizer_cls = torch.optim.AdamW
     optimizer = optimizer_cls(
-        unet.parameters(),
+        optimize_param,
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
@@ -684,9 +669,8 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = keyframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
-
-
+        train_dataset = Actionframes(split='train', args=config, tokenizer=tokenizer, img_size=(512, 512), history_len=config.history_len, max_video_len = config.max_video_len)
+        val_dataset = Actionframes(split='val', args=config, tokenizer=tokenizer, img_size=(512, 512), max_video_len = config.max_video_len)
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -694,6 +678,14 @@ def main():
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
+    val_dataloader = torch.utils.data.DataLoader(
+        val_dataset,
+        shuffle=False,
+        batch_size=1,
+        num_workers=8,
+        drop_last=False
+    )
+
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -710,12 +702,9 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    action_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        action_model, optimizer, train_dataloader, lr_scheduler
     )
-
-    if args.use_ema:
-        ema_unet.to(accelerator.device)
 
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -726,10 +715,10 @@ def main():
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
         args.mixed_precision = accelerator.mixed_precision
-
-    # Move text_encode and vae to gpu and cast to weight_dtype
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
+    
+    if not args.skip_image:
+        # Move text_encode and vae to gpu and cast to weight_dtype
+        vae.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -755,36 +744,12 @@ def main():
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    logger.info(f"  Learning Rate = {args.learning_rate}")
     global_step = 0
     first_epoch = 0
 
-    # Potentially load in the weights and states from a previous save
-    if args.resume_from_checkpoint:
-        if args.resume_from_checkpoint != "latest":
-            path = os.path.basename(args.resume_from_checkpoint)
-        else:
-            # Get the most recent checkpoint
-            dirs = os.listdir(args.output_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
-            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-            path = dirs[-1] if len(dirs) > 0 else None
-
-        if path is None:
-            accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
-            )
-            args.resume_from_checkpoint = None
-            initial_global_step = 0
-        else:
-            accelerator.print(f"Resuming from checkpoint {path}")
-            accelerator.load_state(os.path.join(args.output_dir, path))
-            global_step = int(path.split("-")[1])
-
-            initial_global_step = global_step
-            first_epoch = global_step // num_update_steps_per_epoch
-
-    else:
-        initial_global_step = 0
+    
+    initial_global_step = 0
 
     progress_bar = tqdm(
         range(0, args.max_train_steps),
@@ -797,79 +762,67 @@ def main():
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
-                # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
-                latents = latents * vae.config.scaling_factor
+            
+            with accelerator.accumulate(action_model):
+                if not args.skip_image:
+                    video_frames = batch["label_imgs"].to(weight_dtype)
+                    bs, l, _, _, _ = video_frames.size()
+                    video_frames = rearrange(video_frames, 'b l c h w -> (b l) c h w', b=bs, l=l)
 
-                # Sample noise that we'll add to the latents
-                noise = torch.randn_like(latents)
-                if args.noise_offset:
-                    # https://www.crosslabs.org//blog/diffusion-with-offset-noise
-                    noise += args.noise_offset * torch.randn(
-                        (latents.shape[0], latents.shape[1], 1, 1), device=latents.device
-                    )
-                if args.input_perturbation:
-                    new_noise = noise + args.input_perturbation * torch.randn_like(noise)
-                bsz = latents.shape[0]
-                # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
-                timesteps = timesteps.long()
+                    latents = vae.encode(video_frames).latent_dist.sample() # receive bl, c, h, w
+                    latents = latents * vae.config.scaling_factor
 
-                # Add noise to the latents according to the noise magnitude at each timestep
-                # (this is the forward diffusion process)
-                if args.input_perturbation:
-                    noisy_latents = noise_scheduler.add_noise(latents, new_noise, timesteps)
+                    latents = rearrange(latents, '(b l) c h w -> b l c h w', b=bs, l=l)
+
+                    # image context
+                    image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
+
+                    del latents
                 else:
-                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                    image_context = None
 
-                # Get the text embedding for conditioning
+                # NOTE For Action
+                steers = batch['steer'] # b, f
+                speeds = batch['speed'] # b, f
+                attention_mask = batch['attention_mask']
+                loss_mask = batch['loss_mask']
 
-                # add drop text prob
-                if args.drop_text:
-                    text_drop_prob = args.drop_text_ratio
-                    prob = torch.rand(1).item()
-                    if prob < text_drop_prob:
-                        text_input = torch.tensor([[49406]+[49407]*76]).repeat(bsz,1).to(latents.device)
-                    else:
-                        text_input = batch["input_ids"]
-                else:
-                    text_input = batch["input_ids"]
 
-                encoder_hidden_states = text_encoder(text_input)[0]
+                action = torch.stack([steers, speeds], dim=-1) # b, f, 2
 
-                # Get the target for loss depending on the prediction type
-                if args.prediction_type is not None:
-                    # set prediction_type of scheduler if defined
-                    noise_scheduler.register_to_config(prediction_type=args.prediction_type)
+                # history_action = action[:, :args.history_len]
+                # future_action = action[:, args.history_len: args.history_len+1]
 
-                if noise_scheduler.config.prediction_type == "epsilon":
-                    target = noise
-                elif noise_scheduler.config.prediction_type == "v_prediction":
-                    target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                else:
-                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+                src_action = action[:, :-1] # b f-1 1
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                hidden_states = action_model(src_action, attention_mask, image_context)
+                logits = hidden_states['logits']
+                logits = logits.float()
 
-                if args.snr_gamma is None:
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                labels = action[..., :, :].contiguous()
+
+                # shift_logits = logits[..., :, :].contiguous()
+                # shift_labels = labels[..., :].contiguous()
+                # loss_mask = loss_mask[..., :].contiguous()
+                shift_logits = logits
+                shift_labels = labels
+                loss_mask = loss_mask
+
+                bsz = loss_mask.shape[0]
+                
+                
+                if args.loss == 'l2':
+                    loss_action = F.mse_loss(shift_logits, shift_labels, reduction="none")
+                    loss_action = loss_action.mean(dim=-1)
+                    loss_action = (loss_action.view(bsz, -1) * loss_mask).mean()
+                elif args.loss == 'l1':
+                    loss_action = F.l1_loss(shift_logits, shift_labels, reduction="none")
+                    loss_action = loss_action.mean(dim=-1)
+                    loss_action = (loss_action.view(bsz, -1) * loss_mask).mean()
                 else:
-                    # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
-                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
-                    # This is discussed in Section 4.2 of the same paper.
-                    snr = compute_snr(noise_scheduler, timesteps)
-                    if noise_scheduler.config.prediction_type == "v_prediction":
-                        # Velocity objective requires that we add one to SNR values before we divide by them.
-                        snr = snr + 1
-                    mse_loss_weights = (
-                        torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
-                    )
-
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
-                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
-                    loss = loss.mean()
+                    raise ValueError(f"{args.loss} is not implemented")
+                loss = loss_action
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
@@ -878,19 +831,154 @@ def main():
                 # Backpropagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
+                    accelerator.clip_grad_norm_(action_model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
-                if args.use_ema:
-                    ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
+
+                # NOTE validation
+                if global_step % args.eval_steps == 0:
+                    if accelerator.is_main_process:
+                        action_model.eval()
+                        device = next(action_model.parameters()).device
+                        
+                        gather_preds = []
+                        gather_gt = []
+                        gather_his = []
+                        
+                        action_compare = []
+
+                        n = 0
+                        for n, batch in tqdm(enumerate(val_dataloader)):
+                            n = n + 1
+                            # if n>20:
+                            #     break
+                            names = batch['name']
+                            scenes = batch['scene']
+                            with torch.no_grad():
+                                if not args.skip_image:
+                                    video_frames = batch["label_imgs"].to(weight_dtype)
+                                    bs, l, _, _, _ = video_frames.size()
+                                    video_frames = rearrange(video_frames, 'b l c h w -> (b l) c h w', b=bs, l=l)
+
+                                    video_frames = video_frames.to(device)
+                                    latents = vae.encode(video_frames).latent_dist.sample() # receive bl, c, h, w
+                                    latents = latents * vae.config.scaling_factor
+
+                                    latents = rearrange(latents, '(b l) c h w -> b l c h w', b=bs, l=l)
+                                    del latents
+                                    # image context
+                                    image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
+                                else:
+                                    image_context = None
+                                
+                                steers = batch['steer'] # b, f
+                                speeds = batch['speed'] # b, f
+
+                                action = torch.stack([steers, speeds], dim=-1) # b, f, 2
+
+                                history_action = action[:, :args.history_len]
+                                future_action = action[:, args.history_len:]
+                                future_action = future_action.to(device)
+
+                                gather_gt.append(future_action)
+                                gather_his.append(history_action)
+
+                                history_action = history_action.to(device)
+
+                                history_action_ = history_action
+
+                                # prepare attention_mask
+                                input_mask = [1] + [1] * history_action.shape[1] # bos + history_action
+                                input_mask = torch.Tensor(input_mask).to(device).unsqueeze(0)
+                                
+                                prompt_len = len(input_mask[0])
+                                start_pos = prompt_len
+                                total_len = prompt_len + 24 # NOTE hard to set 24
+
+                                attention_mask = input_mask.bool()
+                                attention_mask = torch.cat(
+                                    (attention_mask, torch.zeros(1, total_len - attention_mask.shape[-1]).bool().to(attention_mask.device)),
+                                    dim=-1)
+
+
+                                pred_action = []
+
+                                prev_pos = 0
+                                past_key_values = None
+                                # decomp to two linear
+                                inputs_embeds_1 = action_model.embed_tokens_1(history_action_[:, :, 0:1])
+                                inputs_embeds_2 = action_model.embed_tokens_2(history_action_[:, :, 1:])
+                                input_embed = inputs_embeds_1 + inputs_embeds_2
+
+                                # add bos
+                                input_embed = torch.cat([action_model.bos_embed, input_embed], dim=1) 
+
+                                next_ipt = input_embed[:, prev_pos:start_pos]
+
+                                for cur_pos in tqdm(range(start_pos, total_len)):
+                                    intermid_state = action_model(
+                                        inputs_embeds=next_ipt,
+                                        past_key_values=past_key_values,
+                                        use_cache=True,
+                                    )
+                                    prediction = intermid_state["logits"][:, -1, :] # b 1 2
+                                    past_key_values = intermid_state["next_cache"]
+
+                                    # print('pred: ', prediction)
+                                    pred_action.append(prediction[:, None])
+
+                                    prev_pos = cur_pos
+                                    next_embed_1 = action_model.embed_tokens_1(prediction[:, 0:1])
+                                    next_embed_2 = action_model.embed_tokens_2(prediction[:, 1:])
+                                    next_embed = next_embed_1 + next_embed_2
+                                    next_ipt = next_embed[:, None, :]
+                                
+                                pred_action = torch.cat(pred_action, dim=1) # b f d
+                                gather_preds.append(pred_action)
+
+                                for idx_n, name in enumerate(names):
+                                    action_hat_sam = pred_action[idx_n]
+                                    action_gt_sam = future_action[idx_n]
+                                    action_his_sam = history_action[idx_n]
+                                    action_compare.append(
+                                        {
+                                            'scene': scenes[idx_n],
+                                            'name': name,
+                                            'action_pred': action_hat_sam.cpu().numpy(),
+                                            'action_gt': action_gt_sam.cpu().numpy(),
+                                            'action_his': action_his_sam.cpu().numpy()
+                                        }
+                                    )
+
+                        # gather
+                        gather_preds = torch.cat(gather_preds, dim=0) # tbsz, f, d
+                        gather_gt = torch.cat(gather_gt, dim=0) # tbsz, f, d
+                        print(f'pred shape: {gather_preds.shape}')
+                        print(f'gt shape: {gather_gt.shape}')
+                        discrepancy = F.l1_loss(gather_preds.flatten(0, 1).float(), gather_gt.flatten(0, 1).float(), reduction="mean")
+                        t0_discrepancy = F.l1_loss(gather_preds[:, 0].float(), gather_gt[:, 0].float(), reduction="mean")
+
+                        print(f'--------------------------')
+                        print(f'eval l1 discrepancy: {discrepancy}, t0 discrepancy: {t0_discrepancy}')
+
+                        accelerator.log({"val_loss": discrepancy}, step=global_step)
+                        accelerator.log({"val_t0_loss": t0_discrepancy}, step=global_step)
+
+                        os.makedirs(os.path.join(args.output_dir, f'preview_{global_step}step'), exist_ok=True)
+
+                        # save prediction
+                        with open(os.path.join(args.output_dir, f'preview_{global_step}step', 'action.json'), 'w') as f:
+                            json.dump(action_compare, f, default=numpy_serializable)
+
+                        print('inference done!')
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
@@ -915,84 +1003,42 @@ def main():
                                     shutil.rmtree(removing_checkpoint)
 
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                        unwrapped_unet = accelerator.unwrap_model(unet)
-                        unwrapped_unet.save_pretrained(save_path, safe_serialization=False)
-                        logger.info(f"Saved state to {save_path}")
+                        os.makedirs(save_path, exist_ok=True)
+                        file_path = os.path.join(save_path, 'ckpt.pth')
+                        unwrapped_unet = accelerator.unwrap_model(action_model)
+                        torch.save(unwrapped_unet.state_dict(), file_path)
+                        logger.info(f"Saved state to {file_path}")
                         del unwrapped_unet
 
+                action_model.train()
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
 
             if global_step >= args.max_train_steps:
                 break
 
-        if accelerator.is_main_process:
-            if args.validation_prompts is not None and epoch % args.validation_epochs == 0:
-                if args.use_ema:
-                    # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
-                    ema_unet.store(unet.parameters())
-                    ema_unet.copy_to(unet.parameters())
-                log_validation(
-                    vae,
-                    text_encoder,
-                    tokenizer,
-                    unet,
-                    args,
-                    accelerator,
-                    weight_dtype,
-                    global_step,
-                )
-                if args.use_ema:
-                    # Switch back to the original UNet parameters.
-                    ema_unet.restore(unet.parameters())
-
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        unet = accelerator.unwrap_model(unet)
-        if args.use_ema:
-            ema_unet.copy_to(unet.parameters())
+        unwrapped_unet = accelerator.unwrap_model(action_model)
 
-        pipeline = StableDiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            text_encoder=text_encoder,
-            vae=vae,
-            unet=unet,
-            revision=args.revision,
-            variant=args.variant,
-            safety_checker=None,
-        )
-        pipeline.save_pretrained(args.output_dir, safe_serialization=False)
+        #TODO save UNet
+        # save for ZeRO-3 offloading
+        # unwrapped_unet.save_pretrained(
+        #     os.path.join(args.output_dir, 'unet'),
+        #     is_main_process=accelerator.is_main_process,
+        #     save_function=accelerator.save,
+        #     state_dict=accelerator.get_state_dict(unet),
+        # )
+        file_path = os.path.join(args.output_dir, 'last.pth')
+        torch.save(unwrapped_unet.state_dict(), file_path)
+        logger.info(f"Saved state to {file_path}")
+        del unwrapped_unet
 
-        # Run a final round of inference.
-        images = []
-        if args.validation_prompts is not None:
-            logger.info("Running inference for collecting generated images...")
-            pipeline = pipeline.to(accelerator.device)
-            pipeline.torch_dtype = weight_dtype
-            pipeline.set_progress_bar_config(disable=True)
+        # from safetensors.torch import save_file
+        #TODO ZeRO-2 saving
+        # unwrapped_unet.save_pretrained(os.path.join(args.output_dir, 'action_vae'))
 
-            if args.enable_xformers_memory_efficient_attention:
-                pipeline.enable_xformers_memory_efficient_attention()
-
-            if args.seed is None:
-                generator = None
-            else:
-                generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-
-            for i in range(len(args.validation_prompts)):
-                with torch.autocast("cuda"):
-                    image = pipeline(args.validation_prompts[i], num_inference_steps=20, generator=generator).images[0]
-                images.append(image)
-
-        if args.push_to_hub:
-            save_model_card(args, repo_id, images, repo_folder=args.output_dir)
-            upload_folder(
-                repo_id=repo_id,
-                folder_path=args.output_dir,
-                commit_message="End of training",
-                ignore_patterns=["step_*", "epoch_*"],
-            )
 
     accelerator.end_training()
 

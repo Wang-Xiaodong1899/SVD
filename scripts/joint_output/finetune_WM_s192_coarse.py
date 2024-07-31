@@ -1,5 +1,8 @@
+#!/usr/bin/env python
+# coding=utf-8
+
 # NOTE
-# First version Text-to-Image on Nuscenes Keyframes dataset
+# first World Model
 
 import argparse
 import logging
@@ -29,17 +32,23 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/src')
+sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/src')
 
 import diffusers
-from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
+from diffusers.models.unet_wm_coarse import UNetSpatioTemporalConditionModel_Action
+
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
 from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
 from diffusers.utils.import_utils import is_xformers_available
 
-from nuscene_image import keyframes
 
+from nuscene_video_action_ms import Actionframes
+from safetensors import safe_open
+from collections import OrderedDict
+
+from einops import rearrange, repeat
 
 if is_wandb_available():
     import wandb
@@ -49,12 +58,6 @@ if is_wandb_available():
 check_min_version("0.25.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
-
-DATASET_NAME_MAPPING = {
-    "lambdalabs/pokemon-blip-captions": ("image", "text"),
-    "/ssd_datasets/wxiaodong/naruto-blip-captions": ("image", "text"),
-}
-
 
 def save_model_card(
     args,
@@ -193,8 +196,14 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/stable-diffusion-v1-4",
+        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/image-ep50-s192-1e-4",
         required=True,
+        help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_clip_model_name_or_path",
+        type=str,
+        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels/clip-vit-large-patch14",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -340,7 +349,7 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--lr_warmup_steps", type=int, default=10, help="Number of steps for the warmup in the lr scheduler."
+        "--lr_warmup_steps", type=int, default=20, help="Number of steps for the warmup in the lr scheduler."
     )
     parser.add_argument(
         "--snr_gamma",
@@ -389,7 +398,7 @@ def parse_args():
     parser.add_argument(
         "--prediction_type",
         type=str,
-        default=None,
+        default='v_prediction',
         help="The prediction_type that shall be used for training. Choose between 'epsilon' or 'v_prediction' or leave `None`. If left to `None` the default prediction type of the scheduler: `noise_scheduler.config.prediciton_type` is chosen.",
     )
     parser.add_argument(
@@ -431,7 +440,7 @@ def parse_args():
     parser.add_argument(
         "--checkpointing_steps",
         type=int,
-        default=100000,
+        default=10000000,
         help=(
             "Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"
             " training using `--resume_from_checkpoint`."
@@ -440,7 +449,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoints_total_limit",
         type=int,
-        default=4,
+        default=3,
         help=("Max number of checkpoints to store."),
     )
     parser.add_argument(
@@ -465,21 +474,68 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2i-ft-s192-e",
+        default="wm_v1_s192",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
         ),
     )
     parser.add_argument(
-        "--drop_text", action="store_true", help="Whether or not drop text caption."
-    )
-    parser.add_argument(
-        "--drop_text_ratio",
+        "--drop_context",
         type=float,
         default=0.1,
-        help="text drop ratio",
+        help="ratio for drop image context"
     )
+    parser.add_argument(
+        "--temp_style",
+        type=str,
+        default="image",
+        help=(
+            "temp layer cross-attention information, text, text-image, image"
+        ),
+    )
+    parser.add_argument(
+        "--img_style",
+        type=str,
+        default="pooler_output",
+        help=(
+            "image clip embedding type, pooler_output, last_hidden_state"
+        ),
+    )
+    parser.add_argument(
+        "--history_len",
+        type=int,
+        default=8,
+        help="history context"
+    )
+    parser.add_argument(
+        "--ac_beta",
+        type=float,
+        default=0.01,
+        help="beta for action loss"
+    )
+    parser.add_argument(
+        "--ckpt",
+        type=str,
+        default=None,
+        help="resume checkpoint path"
+    )
+    parser.add_argument(
+        "--stop_action_grad",
+        action="store_true",
+        help="Whether or not to stop action branch gradient",
+    )
+    parser.add_argument(
+        "--enable_train_action_encoder",
+        action="store_true",
+        help="Whether or not to finetune action encoder",
+    )
+    parser.add_argument(
+        "--added_to_temb",
+        action="store_true",
+        help="Whether or not to add action embedding to time embedding",
+    )
+
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -496,11 +552,10 @@ def parse_args():
 
     return args
 
-
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels', args.output_dir)
+    args.output_dir = os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels-vis', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
@@ -514,12 +569,14 @@ def main():
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-
+    from accelerate import DistributedDataParallelKwargs as DDPK
+    kwargs = DDPK(find_unused_parameters=True)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
+        kwargs_handlers=[kwargs]
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -585,21 +642,103 @@ def main():
             args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
         )
 
-    unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant='fp16'
+        #NOTE add clip vision model
+        # clip_model = transformers.CLIPModel.from_pretrained(
+        # args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
+
+
+    
+    # for video
+    # load model manually to adapt to new state_dicts
+    unet = UNetSpatioTemporalConditionModel_Action(
+        cross_attention_dim=768, in_channels=4, temp_style=args.temp_style,
+        history_len=8,
+        wm_action_path="/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/smodels-vis/action-vae-5e-5-reproduce-ms/checkpoint-13500/ckpt.pth"
         )
+
+    unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
+    unet_files = os.listdir(unet_dir)
+    if 'diffusion_pytorch_model.safetensors' in unet_files:
+        tensors = {}
+        with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
+            for k in f.keys():
+                tensors[k] = f.get_tensor(k)
+    else:
+        # diffusion_pytorch_model.bin
+        tensors = torch.load(os.path.join(unet_dir, 'diffusion_pytorch_model.bin'), map_location=torch.device('cpu'))
+
+    new_state_dicts = OrderedDict()
+    for k, v in tensors.items():
+        if 'mid_block' in k and 'resnets' in k:
+            strs = k.split('.')
+            new_k = '.'.join(strs[:3]) + '.spatial_res_block.' + '.'.join(strs[-2:])
+            new_state_dicts[new_k] = v
+        elif 'resnets' in k and 'temporal_res_blocks' not in k:
+            strs = k.split('.')
+            new_k = '.'.join(strs[:4]) + '.spatial_res_block.' + '.'.join(strs[-2:])
+            new_state_dicts[new_k] = v
+        else:
+            new_state_dicts[k] = v
+
+    miss_keys, ignore_keys = unet.load_state_dict(new_state_dicts, strict=False)
+    if accelerator.is_main_process:
+        pass
+        print('miss_keys: ', miss_keys)
+        print('ignore_keys: ', ignore_keys)
+    del new_state_dicts
+    
+    # resume from previous checkpoint
+    if args.ckpt:
+        resume_tensors = {}
+        with safe_open(os.path.join(args.ckpt, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
+            for k in f.keys():
+                resume_tensors[k] = f.get_tensor(k)
+        unet.load_state_dict(resume_tensors, strict=False)
+        print(f'loaded weights from {args.ckpt}')
+        del resume_tensors
+
+    optimize_param = []
+    # unet+wm_action: 1185.5674 M
+
+    # unet+wm decoder: 1071.9498 M
+
+    # update only missing weights
+    frozen_wm_param = []
+    for name, param in unet.named_parameters():
+        param.requires_grad = False
+        if name in miss_keys:
+            if 'wm_action.context_block' in name or 'wm_action.encoder' in name or 'wm_action.action' in name or 'wm_action.pos' in name :
+                if args.enable_train_action_encoder:
+                    param.requires_grad = True
+                    optimize_param.append(param)
+                else:
+                    param.requires_grad = False
+                    frozen_wm_param.append(name)
+            else:
+                param.requires_grad = True
+                optimize_param.append(param)
+    if accelerator.is_main_process:
+        print(f'Frozen wm_action layers: {frozen_wm_param}')
 
     # Freeze vae and text_encoder and set unet to trainable
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
-    unet.train()
+    # clip_model.requires_grad_(False)
+    unet.config.sample_size = 96 # fixed num
 
-    # Create EMA for the unet.
-    if args.use_ema:
-        ema_unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant='fp16'
-        )
-        ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
+
+    params = sum(p.numel() for p in unet.parameters() if p.requires_grad)
+    params_in_million = params / 1e6  # M
+    if accelerator.is_main_process:
+        print(f"updated parameters: {params_in_million} M")
+
+    
+    logger.info(f'Frozen wm_action layers: {frozen_wm_param}')
+    logger.info(f"updated parameters: {params_in_million} M")
+
+    for param in unet.parameters():
+        if param.requires_grad:
+            param.data = param.to(torch.float32)
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -613,41 +752,6 @@ def main():
             unet.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
-
-    # `accelerate` 0.16.0 will have better support for customized saving
-    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-        def save_model_hook(models, weights, output_dir):
-            if accelerator.is_main_process:
-                if args.use_ema:
-                    ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
-
-                for i, model in enumerate(models):
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
-
-                    # make sure to pop weight so that corresponding model is not saved again
-                    weights.pop()
-
-        def load_model_hook(models, input_dir):
-            if args.use_ema:
-                load_model = EMAModel.from_pretrained(os.path.join(input_dir, "unet_ema"), UNet2DConditionModel)
-                ema_unet.load_state_dict(load_model.state_dict())
-                ema_unet.to(accelerator.device)
-                del load_model
-
-            for i in range(len(models)):
-                # pop models so that they are not loaded again
-                model = models.pop()
-
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
-                model.register_to_config(**load_model.config)
-
-                model.load_state_dict(load_model.state_dict())
-                del load_model
-
-        accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook)
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
@@ -675,8 +779,10 @@ def main():
     else:
         optimizer_cls = torch.optim.AdamW
 
+    #TODO train partial parameters
+
     optimizer = optimizer_cls(
-        unet.parameters(),
+        optimize_param,
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
@@ -684,7 +790,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = keyframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
+        train_dataset = Actionframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384), history_len=args.history_len, max_video_len = 8)
 
 
     # DataLoaders creation:
@@ -714,9 +820,6 @@ def main():
         unet, optimizer, train_dataloader, lr_scheduler
     )
 
-    if args.use_ema:
-        ema_unet.to(accelerator.device)
-
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -730,6 +833,8 @@ def main():
     # Move text_encode and vae to gpu and cast to weight_dtype
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
+    # unet.to(accelerator.device, dtype=weight_dtype)
+    # clip_model.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -755,6 +860,7 @@ def main():
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    logger.info(f"  Learning Rate = {args.learning_rate}")
     global_step = 0
     first_epoch = 0
 
@@ -796,11 +902,47 @@ def main():
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
+        train_loss_1 = 0.0
+        train_loss_2 = 0.0
+        train_loss_last = 0.0
+        train_loss_ac = 0.0
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
-                # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
+
+                video_frames = batch["label_imgs"].to(weight_dtype)
+                bs, l, _, _, _ = video_frames.size()
+                video_frames = rearrange(video_frames, 'b l c h w -> (b l) c h w', b=bs, l=l)
+
+
+                latents = vae.encode(video_frames).latent_dist.sample() # receive bl, c, h, w
                 latents = latents * vae.config.scaling_factor
+
+                latents = rearrange(latents, '(b l) c h w -> b l c h w', b=bs, l=l)
+
+                # image context
+                if args.drop_context > 0:
+                    prob = torch.rand(1).item()
+                    if prob < args.drop_context:
+                        image_context = torch.zeros_like(latents[:, 0])
+                    else:
+                        image_context = latents[:, 0]
+                else:
+                    image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
+
+
+                # NOTE get image clip embedding
+                # first clip features
+                # vision_output = clip_model.vision_model(
+                #     batch["clip_imgs"][:, 0:1].flatten(0, 1)
+                #     .to(latents.device, dtype=clip_model.dtype))
+                
+                # ["pooler_output", "last_hidden_state"]
+                image_embedding_style = args.img_style
+
+                # clip_embedding = clip_model.visual_projection(vision_output[image_embedding_style]) # b 1 1024
+                # clip_embedding = clip_embedding.view(bs, -1, clip_embedding.shape[-1])
+                clip_embedding = None
+                
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -811,8 +953,8 @@ def main():
                     )
                 if args.input_perturbation:
                     new_noise = noise + args.input_perturbation * torch.randn_like(noise)
-                bsz = latents.shape[0]
-                # Sample a random timestep for each image
+                bsz = latents.shape[0] # only batch size
+                # Sample a random timestep for a video
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
                 timesteps = timesteps.long()
 
@@ -824,19 +966,7 @@ def main():
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
-
-                # add drop text prob
-                if args.drop_text:
-                    text_drop_prob = args.drop_text_ratio
-                    prob = torch.rand(1).item()
-                    if prob < text_drop_prob:
-                        text_input = torch.tensor([[49406]+[49407]*76]).repeat(bsz,1).to(latents.device)
-                    else:
-                        text_input = batch["input_ids"]
-                else:
-                    text_input = batch["input_ids"]
-
-                encoder_hidden_states = text_encoder(text_input)[0]
+                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
@@ -850,11 +980,31 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
+                # NOTE FOR Action
+                steers = batch['steer'] # b, f
+                speeds = batch['speed'] # b, f
+
+                action = torch.stack([steers, speeds], dim=-1) # b, f, 2
+
+                history_action = action[:, :args.history_len]
+                future_action = action[:, args.history_len:]
+
+                # concat
+                added_time_ids = history_action
+
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                model_pred, action_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context, clip_embedding=clip_embedding, history_len=args.history_len, stop_action_grad=args.stop_action_grad, enable_train_action_encoder=args.enable_train_action_encoder, added_to_temb=args.added_to_temb)
+
+                # print(f'action_pred shape: {action_pred.shape}')
+                # print(f'future_action shape: {future_action.shape}')
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+
+                    # NOTE action loss, x-prediction
+                    loss_action = F.mse_loss(action_pred.flatten(0, 1).float(), future_action.flatten(0, 1).float(), reduction="mean")
+                    loss = loss + args.ac_beta * loss_action
+
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
@@ -871,26 +1021,52 @@ def main():
                     loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
                     loss = loss.mean()
 
+                # b l c h w
+                # loss for reference frame
+                loss_1 = F.mse_loss(model_pred.float()[:, 0], target.float()[:, 0], reduction="mean")
+                loss_2 = F.mse_loss(model_pred.float()[:, 1], target.float()[:, 1], reduction="mean")
+                loss_last = F.mse_loss(model_pred.float()[:, -1], target.float()[:, -1], reduction="mean")
+
+
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
+                # NOTE action
+                avg_loss_ac = accelerator.gather(loss_action.repeat(args.train_batch_size)).mean()
+                train_loss_ac += avg_loss_ac.item() / args.gradient_accumulation_steps
+
+                # gather other loss
+                avg_loss_1 = accelerator.gather(loss_1.repeat(args.train_batch_size)).mean()
+                train_loss_1 += avg_loss_1.item() / args.gradient_accumulation_steps
+                avg_loss_2 = accelerator.gather(loss_2.repeat(args.train_batch_size)).mean()
+                train_loss_2 += avg_loss_2.item() / args.gradient_accumulation_steps
+                avg_loss_last = accelerator.gather(loss_last.repeat(args.train_batch_size)).mean()
+                train_loss_last += avg_loss_last.item() / args.gradient_accumulation_steps
+
                 # Backpropagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
+                    accelerator.clip_grad_norm_(optimize_param, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
-                if args.use_ema:
-                    ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
+                accelerator.log({"train_loss_1": train_loss_1}, step=global_step)
+                accelerator.log({"train_loss_2": train_loss_2}, step=global_step)
+                accelerator.log({"train_loss_last": train_loss_last}, step=global_step)
+                accelerator.log({"train_loss_action": train_loss_ac}, step=global_step)
                 train_loss = 0.0
+                train_loss_1 = 0.0
+                train_loss_2 = 0.0
+                train_loss_last = 0.0
+                train_loss_ac = 0.0
+
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
@@ -916,7 +1092,8 @@ def main():
 
                         save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                         unwrapped_unet = accelerator.unwrap_model(unet)
-                        unwrapped_unet.save_pretrained(save_path, safe_serialization=False)
+                        unwrapped_unet.to(torch.float16)
+                        unwrapped_unet.save_pretrained(save_path)
                         logger.info(f"Saved state to {save_path}")
                         del unwrapped_unet
 
@@ -928,10 +1105,6 @@ def main():
 
         if accelerator.is_main_process:
             if args.validation_prompts is not None and epoch % args.validation_epochs == 0:
-                if args.use_ema:
-                    # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
-                    ema_unet.store(unet.parameters())
-                    ema_unet.copy_to(unet.parameters())
                 log_validation(
                     vae,
                     text_encoder,
@@ -942,27 +1115,37 @@ def main():
                     weight_dtype,
                     global_step,
                 )
-                if args.use_ema:
-                    # Switch back to the original UNet parameters.
-                    ema_unet.restore(unet.parameters())
 
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        unet = accelerator.unwrap_model(unet)
-        if args.use_ema:
-            ema_unet.copy_to(unet.parameters())
+        unwrapped_unet = accelerator.unwrap_model(unet)
 
-        pipeline = StableDiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            text_encoder=text_encoder,
-            vae=vae,
-            unet=unet,
-            revision=args.revision,
-            variant=args.variant,
-            safety_checker=None,
-        )
-        pipeline.save_pretrained(args.output_dir, safe_serialization=False)
+        #TODO save UNet
+        # save for ZeRO-3 offloading
+        # unwrapped_unet.save_pretrained(
+        #     os.path.join(args.output_dir, 'unet'),
+        #     is_main_process=accelerator.is_main_process,
+        #     save_function=accelerator.save,
+        #     state_dict=accelerator.get_state_dict(unet),
+        # )
+
+        # from safetensors.torch import save_file
+        #TODO ZeRO-2 saving
+        unwrapped_unet.to(torch.float16)
+        unwrapped_unet.save_pretrained(os.path.join(args.output_dir, 'unet'))
+
+        # pipeline = StableDiffusionPipeline.from_pretrained(
+        #     args.pretrained_model_name_or_path,
+        #     text_encoder=text_encoder,
+        #     vae=vae,
+        #     unet=unet,
+        #     revision=args.revision,
+        #     variant=args.variant,
+        #     safety_checker=None,
+        # )
+        # pipeline.to(torch.float16)
+        # pipeline.save_pretrained(args.output_dir)
 
         # Run a final round of inference.
         images = []

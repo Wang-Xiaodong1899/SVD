@@ -184,3 +184,12 @@ tags
 
 # wandb
 wandb
+
+# result
+FVD-first*
+FVD-Act*
+
+# models
+smodels-vis
+**.pth
+smodels

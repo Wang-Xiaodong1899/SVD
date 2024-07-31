@@ -34,7 +34,7 @@ def get_fvd_logits(videos, i3d, device):
 def load_fvd_model(device):
     i3d = InceptionI3d(400, in_channels=3).to(device)
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    i3d_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/SVD/scripts/text_to_video/metrics/i3d_pretrained_400.pt'
+    i3d_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_video/metrics/i3d_pretrained_400.pt'
     i3d.load_state_dict(torch.load(i3d_path, map_location='cpu'))
     print(f'loaded i3d from {i3d_path}')
     i3d.eval()

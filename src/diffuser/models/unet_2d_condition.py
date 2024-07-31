@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
+import dataclasses
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -66,6 +67,7 @@ class UNet2DConditionOutput(BaseOutput):
     """
 
     sample: torch.FloatTensor = None
+    action_model_input_list: list[torch.FloatTensor] = dataclasses.field(default_factory=list)
 
 
 class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
@@ -1100,6 +1102,8 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             )
             down_intrablock_additional_residuals = down_block_additional_residuals
             is_adapter = True
+        
+        action_model_input_list = []
 
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
@@ -1125,6 +1129,10 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
             down_block_res_samples += res_samples
 
+            if len(action_model_input_list) < 2:
+                if sample.shape[1] != 320:
+                    action_model_input_list.append(sample)
+
         if is_controlnet:
             new_down_block_res_samples = ()
 
@@ -1149,6 +1157,9 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 )
             else:
                 sample = self.mid_block(sample, emb)
+            
+            # NOTE add mid-block features
+            action_model_input_list.append(sample)
 
             # To support T2I-Adapter-XL
             if (
@@ -1206,4 +1217,4 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         if not return_dict:
             return (sample,)
 
-        return UNet2DConditionOutput(sample=sample)
+        return UNet2DConditionOutput(sample=sample, action_model_input_list=action_model_input_list)

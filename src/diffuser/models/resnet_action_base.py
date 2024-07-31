@@ -1311,7 +1311,8 @@ class SpatioTemporalResBlockContext(nn.Module):
         
         # inserting image context to hidden states after spatial makes sense
         # print(f'hs shape: {hidden_states.shape}, image context shape: {image_context.shape}')
-        
+        # print(f'hs shape: {hidden_states.shape}, temb shape: {temb.shape}')
+
         hidden_states = self.spatial_res_block(hidden_states, temb)
 
         # print(f'hs after spatial res block {hidden_states.shape}')
