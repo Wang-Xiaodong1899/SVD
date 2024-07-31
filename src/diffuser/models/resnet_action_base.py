@@ -1331,7 +1331,18 @@ class SpatioTemporalResBlockContext(nn.Module):
         # image context only insert into temporal layers
         if image_context is not None:
             # original (b, c, h, w) outside, we repeat here
-            image_context = repeat(image_context, 'b c h w -> b t c h w', t=num_frames)
+            # TODO add multi frames
+            batch_context_frames = image_context.shape[0]
+            if batch_context_frames == batch_size:  # single-frame context
+                image_context = repeat(image_context, 'b c h w -> b t c h w', t=num_frames)
+            else:
+                context_frames = batch_context_frames // batch_size
+                image_context = rearrange(image_context, '(b t) c h w -> b t c h w', t=context_frames)
+                last_context = image_context[:, -1:, :, :, :]
+                repeat_time = num_frames - context_frames
+                last_repeated = last_context.repeat(1, repeat_time, 1, 1, 1)
+                image_context = torch.cat([image_context, last_repeated], dim=1)
+            
             image_context = rearrange(image_context, 'b t c h w -> (b t) c h w')
             image_gamma = self.image_gamma(image_context)
             image_beta = self.image_beta(image_context)
@@ -1469,7 +1480,18 @@ class SpatioTemporalResUpBlockContext(nn.Module):
         # image context only insert into temporal layers
         if image_context is not None:
             # original (b, c, h, w) outside, we repeat here
-            image_context = repeat(image_context, 'b c h w -> b t c h w', t=num_frames)
+            # TODO add multiple frame context
+            batch_context_frames = image_context.shape[0]
+            if batch_context_frames == batch_size:  # single-frame context
+                image_context = repeat(image_context, 'b c h w -> b t c h w', t=num_frames)
+            else:
+                context_frames = batch_context_frames // batch_size
+                image_context = rearrange(image_context, '(b t) c h w -> b t c h w', t=context_frames)
+                last_context = image_context[:, -1:, :, :, :]
+                repeat_time = num_frames - context_frames
+                last_repeated = last_context.repeat(1, repeat_time, 1, 1, 1)
+                image_context = torch.cat([image_context, last_repeated], dim=1)
+            
             image_context = rearrange(image_context, 'b t c h w -> (b t) c h w')
             image_gamma = self.image_gamma(image_context)
             image_beta = self.image_beta(image_context)
