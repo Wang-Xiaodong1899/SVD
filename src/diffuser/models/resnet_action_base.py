@@ -1337,6 +1337,7 @@ class SpatioTemporalResBlockContext(nn.Module):
                 image_context = repeat(image_context, 'b c h w -> b t c h w', t=num_frames)
             else:
                 context_frames = batch_context_frames // batch_size
+                # print(f'image_context: {image_context.shape}')
                 image_context = rearrange(image_context, '(b t) c h w -> b t c h w', t=context_frames)
                 last_context = image_context[:, -1:, :, :, :]
                 repeat_time = num_frames - context_frames

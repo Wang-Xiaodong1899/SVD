@@ -86,17 +86,22 @@ class WorldModel(torch.nn.Module):
         if self.args.drop_context > 0:
             prob = torch.rand(1).item()
             if prob < self.args.drop_context:
-                image_context = torch.zeros_like(latents[:, 0])
+                image_context = torch.zeros_like(latents[:, 0:self.args.ctx_frame])
             else:
-                image_context = latents[:, 0]
+                image_context = latents[:, 0:self.args.ctx_frame]  # add ctx_frame
         else:
-            image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
+            image_context = latents[:, 0:self.args.ctx_frame] # get first frame latents # (b, 4, h, w)
+        
+        # TODO reshape the image_context
+        image_context = rearrange(image_context, 'b t c h w -> (b t) c h w')
 
         # NOTE For Action
         steers = batch['steer'] # b, f
         speeds = batch['speed'] # b, f
         attention_mask = batch['attention_mask']
-        if args.loss_action_beta == 0:
+        
+        # a previous bug: args not defined
+        if self.args.loss_action_beta == 0:
             with torch.no_grad():
                 action = torch.stack([steers, speeds], dim=-1) # b, f, 2
                 src_action = action[:, :-1] # b f-1 1 # NOTE cut last input, max_len = 12
@@ -653,6 +658,13 @@ def parse_args():
         type=str,
         help="pretrained weights for worldmodel",
     )
+    # Add context frames
+    parser.add_argument(
+        "--ctx_frame",
+        default=1,
+        type=int,
+        help="given context frames",
+    )
 
 
     args = parser.parse_args()
@@ -781,8 +793,8 @@ def main():
         action_model.requires_grad_(False)
         action_model.hs_bos_embed.requires_grad_(True)
 
-    # action_model_ckpt_path = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/action-llama-1e-4-v2_bs32_h8_ms16_4gram/checkpoint-2000/ckpt.pth"
-    action_model_ckpt_path = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/action-llama-1e-4-v8_bs8_h3_ms8_4gram/checkpoint-2000/ckpt.pth"
+    action_model_ckpt_path = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/action-llama-1e-4-v2_bs32_h8_ms16_4gram/checkpoint-2000/ckpt.pth"
+    # action_model_ckpt_path = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/action-llama-1e-4-v8_bs8_h3_ms8_4gram/checkpoint-2000/ckpt.pth"
 
     if args.ckpt is None:
         miss_keys, ignore_keys = action_model.load_state_dict(torch.load(action_model_ckpt_path, map_location=torch.device('cpu')), strict=False)

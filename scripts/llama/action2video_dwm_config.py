@@ -39,19 +39,19 @@ class LlamaConfig:
     action_input_dim = 2
 
     # training sequence
-    # max_seq_len = 12 # total sequence length for transformer
+    max_seq_len = 12 # total sequence length for transformer
 
-    # his_seq_len = 8
-    # history_len = 8
-    # max_video_len = 4 # after action history, NOTE max_seq_len = history_len + max_video_len
-    # valid_max_video_len = 36 # 
-
-    max_seq_len = 8 # total sequence length for transformer
-
-    his_seq_len = 3
-    history_len = 3
-    max_video_len = 5 # after action history, NOTE max_seq_len = history_len + max_video_len
+    his_seq_len = 8
+    history_len = 8
+    max_video_len = 4 # after action history, NOTE max_seq_len = history_len + max_video_len
     valid_max_video_len = 36 # 
+
+    # max_seq_len = 8 # total sequence length for transformer
+
+    # his_seq_len = 3
+    # history_len = 3
+    # max_video_len = 5 # after action history, NOTE max_seq_len = history_len + max_video_len
+    # valid_max_video_len = 36 # 
 
     video_offset = 4
     
