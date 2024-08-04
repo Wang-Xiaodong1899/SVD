@@ -157,7 +157,7 @@ class Videoframes(Dataset):
         # image transform
         self.transform = transforms.Compose([
                 transforms.ToPILImage('RGB'),
-                transforms.RandomResizedCrop(img_size, scale=(0.5, 1.), ratio=(1., 1.78)),
+                transforms.RandomResizedCrop(img_size, scale=(0.8, 1.), ratio=(1., 1.777778)),
                 # transforms.RandomHorizontalFlip(p=0.1),
                 transforms.ColorJitter(brightness=0.05, contrast=0.15, saturation=0.15),
                 transforms.ToTensor(),
@@ -247,6 +247,155 @@ class Videoframes(Dataset):
                 'label_imgs': imgs,
                 'steer': seek_steer,
                 'speed': seek_speed,
+                'clip_imgs': clip_video
+            }
+            
+        except Exception as e:
+            print('Bad idx %s skipped because of %s' % (index, e))
+            return self.__getitem__(np.random.randint(0, self.__len__() - 1))
+
+
+from nuscenes.nuscenes import NuScenes
+from nuscenes.utils.splits import create_splits_scenes
+
+class VideoAllframes(Dataset):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', max_video_len = 8, img_size=(256, 448), data_root="/mnt/storage/user/wangxiaodong/nuscenes-all"):
+        super().__init__()
+        self.tokenizer = tokenizer
+        self.args = args
+        self.split = split
+        self.max_video_len = max_video_len
+        self.action_scale = 1
+        clip_size = (224, 224)
+        
+        self.data_root = data_root if data_root else DATAROOT
+        
+        self.nusc = NuScenes(version='v1.0-trainval', dataroot=self.data_root, verbose=True)
+
+        self.splits = create_splits_scenes()
+
+        # training samples
+        self.samples = self.get_samples(split)
+
+        # image transform
+        self.transform = transforms.Compose([
+                transforms.ToPILImage('RGB'),
+                transforms.Resize(img_size),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+            ])
+        
+        self.clip_transform = transforms.Normalize(
+                transformers.image_utils.OPENAI_CLIP_MEAN,
+                transformers.image_utils.OPENAI_CLIP_STD)
+        self.clip_resize = transforms.Resize(clip_size)
+
+        # utime-caption
+        json_path = f'/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_image/caption_utime_allframe_{split}.json'
+        with open(json_path, 'r') as f:
+            self.caption_utime = json.load(f)
+        
+        # scenes num
+        print('Total samples: %d' % len(self.samples))
+    
+    def augmentation(self, frame, transform, state):
+        torch.set_rng_state(state)
+        return transform(frame)
+    
+    def __len__(self):
+        return len(self.samples)
+    
+    
+    def get_all_frames_from_scene(self, scene):
+        # get all frames (keyframes, sweeps)
+        first_sample_token = scene['first_sample_token']
+        my_sample = self.nusc.get('sample', first_sample_token)
+        sensor = "CAM_FRONT"
+        cam_front_data = self.nusc.get('sample_data', my_sample['data'][sensor]) # first frame sensor token
+        # frames = 0
+        all_frames_dict = [] # len() -> frame number
+        while True:
+            all_frames_dict.append(cam_front_data)
+            # filename = cam_front_data['filename']  # current-frame filename
+            next_sample_data_token = cam_front_data['next']  # next-frame sensor token
+            if not next_sample_data_token: # ''
+                break
+            cam_front_data = self.nusc.get('sample_data', next_sample_data_token)
+            # frames += 1
+        
+        return all_frames_dict
+    
+    
+    def get_samples(self, split='train'):
+        selected_scenes = self.splits[split] # all scenes
+        all_scenes = self.nusc.scene
+        selected_scenes_meta = []
+        for sce in all_scenes:
+            if sce['name'] in selected_scenes:
+                selected_scenes_meta.append(sce)
+        
+        samples_group_by_scene = []
+        for scene in selected_scenes_meta:
+            samples_group_by_scene.append(
+                {
+                'scene': scene['name'],
+                'video': self.get_all_frames_from_scene(scene)
+                }
+            )
+        
+        return samples_group_by_scene
+    
+    
+    def __getitem__(self, index):
+        try:
+            my_scene = self.samples[index]
+            
+            my_sample_list = my_scene["video"]
+            inner_frame_len = len(my_sample_list)
+            
+            # print(f'inner_frame_len: {inner_frame_len}')
+
+            # always skip 1 frame
+            seek_start = random.randint(0, inner_frame_len - self.max_video_len)
+            seek_samples = my_sample_list[seek_start: seek_start+self.max_video_len]
+
+            # for first sample
+            my_sample = seek_samples[0]
+            sample_token = my_sample["sample_token"]
+            scene_token = self.nusc.get('sample', sample_token)["scene_token"]
+            desc = self.nusc.get('scene', scene_token)["description"]
+            utime = my_sample['timestamp']
+            first_image_caption = self.caption_utime[str(utime)]
+            
+            # clip all frames
+            frame_paths = []
+            for my_sample in seek_samples:
+                file_path = my_sample["filename"]
+                image_path = os.path.join(self.data_root, file_path)
+                frame_paths.append(image_path)
+            video = np.stack([image2arr(fn) for fn in frame_paths])
+
+            state = torch.get_rng_state()
+            video = torch.stack([self.augmentation(v, self.transform, state) for v in video], dim=0)
+            if video.shape[0] < self.max_video_len:
+                video = torch.cat((video, repeat(video[-1], 'c h w -> n c h w',
+                                                 n=self.max_video_len - video.shape[0])), dim=0)
+            imgs = video[:self.max_video_len]
+
+            clip_video = imgs # n c h w
+            clip_video = _resize_with_antialiasing(clip_video, (224, 224))
+            clip_video = (clip_video + 1.0) / 2.0 # -> (0, 1)
+            clip_video = self.clip_transform(clip_video)
+
+            # suppose use caption for first sample
+            inputs = self.tokenizer(
+                first_image_caption, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+            )
+            inputs_id = inputs['input_ids'][0] # no question
+
+            return {
+                'input_ids': inputs_id,
+                'label_imgs': imgs,
                 'clip_imgs': clip_video
             }
             

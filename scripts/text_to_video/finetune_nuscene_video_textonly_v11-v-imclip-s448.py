@@ -4,13 +4,12 @@
 # NOTE
 # This Version
 # video frames = 8
-# img size: 384x768
+# img size: 384x192
 # -v: v-prediction
 # imclip: image clip embedding for temporal cross attention
 # NOTE
 # unet_v11 now support clip_embedding
-# S768 need 1024 clip embedding
-# vision clip model : CLIP-ViT-H-14-laion2B-s32B-b79K
+
 
 import argparse
 import logging
@@ -44,15 +43,15 @@ sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
-from diffuser.models.unet_action_base import UNetSpatioTemporalConditionModel_Action
+from diffuser.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
 
-from diffuser.optimization import get_scheduler
-from diffuser.training_utils import EMAModel, compute_snr
-from diffuser.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
-from diffuser.utils.import_utils import is_xformers_available
+from diffusers.optimization import get_scheduler
+from diffusers.training_utils import EMAModel, compute_snr
+from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
+from diffusers.utils.import_utils import is_xformers_available
 
 
-from nuscene_video import Videoframes
+from nuscene_video import Videoframes, VideoAllframes
 from safetensors import safe_open
 from collections import OrderedDict
 
@@ -204,14 +203,14 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/mnt/lustrenew/wangxiaodong/smodels/image-v-s768-1e-4/checkpoint-8000",
+        default="/home/wxd/video-generation/diffusers/examples/text_to_image/drive-s256-ep40",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--pretrained_clip_model_name_or_path",
         type=str,
-        default="/mnt/lustrenew/wangxiaodong/models/CLIP-ViT-H-14-laion2B-s32B-b79K",
+        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/clip-vit-large-patch14",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -482,7 +481,7 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2v_v01_s768",
+        default="ti2v_s448_imclip",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -558,7 +557,7 @@ def get_add_time_ids(
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels-vis', args.output_dir)
+    args.output_dir = os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
@@ -645,13 +644,13 @@ def main():
 
         #NOTE add clip vision model
         clip_model = transformers.CLIPModel.from_pretrained(
-            args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
+        args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
 
 
     
     # for video
     # load model manually to adapt to new state_dicts
-    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=1024, in_channels=4, temp_style=args.temp_style)
+    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style=args.temp_style)
 
     unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
     unet_files = os.listdir(unet_dir)
@@ -739,7 +738,7 @@ def main():
                 # load diffusers style into model
                 # load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
                 # model.register_to_config(**load_model.config)
-                load_model = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=1024, in_channels=4)
+                load_model = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4)
                 # inner_tensors = {}
                 # with safe_open("/home/wxd/video-generation/diffusers/examples/text_to_image/sd-drive-ep40/unet/diffusion_pytorch_model.safetensors", framework="pt", device='cpu') as f:
                 #     for k in f.keys():
@@ -813,7 +812,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(384, 768))
+        train_dataset = VideoAllframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448))
 
 
     # DataLoaders creation:
@@ -856,7 +855,6 @@ def main():
     # Move text_encode and vae to gpu and cast to weight_dtype
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
-    unet.to(accelerator.device, dtype=weight_dtype)
     clip_model.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.

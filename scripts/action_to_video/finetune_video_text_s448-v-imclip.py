@@ -52,7 +52,7 @@ from diffuser.utils import check_min_version, deprecate, is_wandb_available, mak
 from diffuser.utils.import_utils import is_xformers_available
 
 
-from nuscene_video import Videoframes
+from nuscene_video import Videoframes, VideoAllframes
 from safetensors import safe_open
 from collections import OrderedDict
 
@@ -211,7 +211,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_clip_model_name_or_path",
         type=str,
-        default="/mnt/lustrenew/wangxiaodong/models/CLIP-ViT-H-14-laion2B-s32B-b79K",
+        default="/mnt/storage/user/wuzehuan/Downloads/models/CLIP-ViT-H-14-laion2B-s32B-b79K",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -482,7 +482,7 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2v_v01_s768",
+        default="t2v_imclip_s448_allframes",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -558,7 +558,7 @@ def get_add_time_ids(
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels-vis', args.output_dir)
+    args.output_dir = os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
@@ -813,8 +813,8 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(384, 768))
-
+        # train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(384, 768))
+        train_dataset = VideoAllframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448))
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
@@ -965,7 +965,6 @@ def main():
                 clip_embedding = clip_model.visual_projection(vision_output[image_embedding_style]) # b 1 1024
                 clip_embedding = clip_embedding.view(bs, -1, clip_embedding.shape[-1])
                 
-
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
                 if args.noise_offset:
