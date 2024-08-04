@@ -253,6 +253,8 @@ class Actionframes(Dataset):
                 frame_paths.append(os.path.join(DATAROOT, seek_path[pidx]))
 
             video = np.stack([image2arr(fn) for fn in frame_paths])
+            
+            pils = video
 
             # TODO debug
             # img = image2arr(frame_paths[choosed_first_frame_idx]) # first image
@@ -293,6 +295,7 @@ class Actionframes(Dataset):
                 'input_ids': inputs_id,
                 'label_imgs': imgs,
                 'pil': img,
+                'pils': pils,
                 'steer': seek_angle_ms,
                 'speed': seek_speed_ms,
                 'clip_imgs': clip_video,

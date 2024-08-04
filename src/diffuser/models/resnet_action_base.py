@@ -1306,6 +1306,7 @@ class SpatioTemporalResBlockContext(nn.Module):
         image_only_indicator: Optional[torch.Tensor] = None,
         action: Optional[torch.FloatTensor] = None,
         image_context: Optional[torch.FloatTensor] = None,
+        zero_pad = False,
     ):
         num_frames = image_only_indicator.shape[-1]
         
@@ -1342,7 +1343,10 @@ class SpatioTemporalResBlockContext(nn.Module):
                 last_context = image_context[:, -1:, :, :, :]
                 repeat_time = num_frames - context_frames
                 last_repeated = last_context.repeat(1, repeat_time, 1, 1, 1)
-                image_context = torch.cat([image_context, last_repeated], dim=1)
+                if zero_pad:
+                    image_context = torch.cat([image_context, torch.zeros_like(last_repeated)], dim=1)
+                else:
+                    image_context = torch.cat([image_context, last_repeated], dim=1)
             
             image_context = rearrange(image_context, 'b t c h w -> (b t) c h w')
             image_gamma = self.image_gamma(image_context)
@@ -1457,6 +1461,7 @@ class SpatioTemporalResUpBlockContext(nn.Module):
         image_only_indicator: Optional[torch.Tensor] = None,
         action: Optional[torch.FloatTensor] = None,
         image_context: Optional[torch.FloatTensor] = None,
+        zero_pad = False
     ):
         num_frames = image_only_indicator.shape[-1]
         
@@ -1491,7 +1496,10 @@ class SpatioTemporalResUpBlockContext(nn.Module):
                 last_context = image_context[:, -1:, :, :, :]
                 repeat_time = num_frames - context_frames
                 last_repeated = last_context.repeat(1, repeat_time, 1, 1, 1)
-                image_context = torch.cat([image_context, last_repeated], dim=1)
+                if zero_pad:
+                    image_context = torch.cat([image_context, torch.zeros_like(last_repeated)], dim=1)
+                else:
+                    image_context = torch.cat([image_context, last_repeated], dim=1)
             
             image_context = rearrange(image_context, 'b t c h w -> (b t) c h w')
             image_gamma = self.image_gamma(image_context)
@@ -1594,6 +1602,7 @@ class SpatioTemporalResBlock(nn.Module):
         image_only_indicator: Optional[torch.Tensor] = None,
         action: Optional[torch.FloatTensor] = None,
         image_context: Optional[torch.FloatTensor] = None,
+        zero_pad = False
     ):
         # fake interface
         num_frames = image_only_indicator.shape[-1]

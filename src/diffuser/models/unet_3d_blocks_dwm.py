@@ -1954,6 +1954,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
         action: Optional[torch.FloatTensor] = None,
         image_context: Optional[torch.FloatTensor] = None,
         clip_embedding: Optional[torch.FloatTensor] = None,
+        zero_pad = False
     ) -> torch.FloatTensor:
         hidden_states = self.resnets[0](
             hidden_states,
@@ -1988,6 +1989,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
                     image_only_indicator,
                     action,
                     image_context,
+                    zero_pad,
                     **ckpt_kwargs,
                 )
             else:
@@ -2004,6 +2006,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
                     image_only_indicator=image_only_indicator,
                     action=action,
                     image_context=image_context,
+                    zero_pad=zero_pad
                 )
 
         return hidden_states
@@ -2063,6 +2066,7 @@ class DownBlockSpatioTemporal(nn.Module):
         image_only_indicator: Optional[torch.Tensor] = None,
         action: Optional[torch.FloatTensor] = None,
         image_context: Optional[torch.FloatTensor] = None,
+        zero_pad = False
     ) -> Tuple[torch.FloatTensor, Tuple[torch.FloatTensor, ...]]:
         output_states = ()
         res_idx = 0
@@ -2082,6 +2086,7 @@ class DownBlockSpatioTemporal(nn.Module):
                         image_only_indicator,
                         action,
                         image_context,
+                        zero_pad,
                         use_reentrant=False,
                     )
                 else:
@@ -2092,6 +2097,7 @@ class DownBlockSpatioTemporal(nn.Module):
                         image_only_indicator,
                         action,
                         image_context,
+                        zero_pad,
                     )
             else:
                 hidden_states = resnet(
@@ -2100,6 +2106,7 @@ class DownBlockSpatioTemporal(nn.Module):
                     image_only_indicator=image_only_indicator,
                     action=action,
                     image_context=image_context,
+                    zero_pad=zero_pad
                 )
             res_idx = res_idx + 1
             output_states = output_states + (hidden_states,)
@@ -2191,6 +2198,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
         action: Optional[torch.FloatTensor] = None,
         image_context: Optional[torch.FloatTensor] = None,
         clip_embedding: Optional[torch.FloatTensor] = None,
+        zero_pad = False
     ) -> Tuple[torch.FloatTensor, Tuple[torch.FloatTensor, ...]]:
         output_states = ()
 
@@ -2216,6 +2224,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
                     image_only_indicator,
                     action,
                     image_context,
+                    zero_pad,
                     **ckpt_kwargs,
                 )
 
@@ -2235,6 +2244,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
                     image_only_indicator=image_only_indicator,
                     action=action,
                     image_context=image_context,
+                    zero_pad=zero_pad
                 )
                 hidden_states = attn(
                     hidden_states,
@@ -2310,6 +2320,7 @@ class UpBlockSpatioTemporal(nn.Module):
         image_only_indicator: Optional[torch.Tensor] = None,
         action: Optional[torch.FloatTensor] = None,
         image_context: Optional[torch.FloatTensor] = None,
+        zero_pad = False
     ) -> torch.FloatTensor:
         res_idx = 0
         for resnet in self.resnets:
@@ -2335,6 +2346,7 @@ class UpBlockSpatioTemporal(nn.Module):
                         image_only_indicator,
                         action,
                         image_context,
+                        zero_pad,
                         use_reentrant=False,
                     )
                 else:
@@ -2345,6 +2357,7 @@ class UpBlockSpatioTemporal(nn.Module):
                         image_only_indicator,
                         action,
                         image_context,
+                        zero_pad
                     )
             else:
                 hidden_states = resnet(
@@ -2353,6 +2366,7 @@ class UpBlockSpatioTemporal(nn.Module):
                     image_only_indicator=image_only_indicator,
                     action=action,
                     image_context=image_context,
+                    zero_pad=zero_pad
                 )
             res_idx = res_idx + 1
         if self.upsamplers is not None:
@@ -2441,6 +2455,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
         action: Optional[torch.FloatTensor] = None,
         image_context: Optional[torch.FloatTensor] = None,
         clip_embedding: Optional[torch.FloatTensor] = None,
+        zero_pad = False
     ) -> torch.FloatTensor:
         res_idx = 0
         for resnet, attn in zip(self.resnets, self.attentions):
@@ -2469,6 +2484,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
                     image_only_indicator,
                     action,
                     image_context,
+                    zero_pad,
                     **ckpt_kwargs,
                 )
                 hidden_states = attn(
@@ -2485,6 +2501,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
                     image_only_indicator=image_only_indicator,
                     action=action,
                     image_context=image_context,
+                    zero_pad=zero_pad
                 )
                 hidden_states = attn(
                     hidden_states,

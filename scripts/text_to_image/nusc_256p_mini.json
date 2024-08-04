@@ -1,0 +1,187 @@
+{
+    "training_dataset": {
+        "_class_name": "common.DatasetAdapter",
+        "base_dataset": {
+            "_class_name": "nusc.MotionDataset",
+            "fs": {
+                "_class_name": "fs.czip.CombinedZipFileSystem",
+                "fs": {
+                    "_class_name": "fsspec.implementations.dirfs.DirFileSystem",
+                    "path": "/mnt/storage/user/wuzehuan/Downloads/data/nuscenes",
+                    "fs": {
+                        "_class_name": "fsspec.implementations.local.LocalFileSystem"
+                    }
+                },
+                "paths": [
+                    "v1.0-mini.zip",
+                    "nuScenes-map-expansion-v1.3.zip"
+                ],
+                "enable_cached_info": true
+            },
+            "dataset_name": "v1.0-mini",
+            "split": "mini_train",
+            "sequence_length": 1,
+            "fps_stride_tuples": [
+                [
+                    0,
+                    1
+                ]
+            ],
+            "sensor_channels": [
+                "CAM_FRONT"
+            ],
+            "keyframe_only": true,
+            "is_multimodal": true,
+            "enable_scene_description": true,
+            "enable_camera_transforms": true,
+            "enable_ego_transforms": true,
+            "_3dbox_image_settings": {
+                "color_table": {
+                    "vehicle.car": [
+                        0,
+                        0,
+                        255
+                    ],
+                    "vehicle.bus": [
+                        128,
+                        0,
+                        255
+                    ],
+                    "vehicle.truck": [
+                        255,
+                        255,
+                        0
+                    ],
+                    "vehicle.construction": [
+                        128,
+                        128,
+                        255
+                    ],
+                    "vehicle.emergency": [
+                        255,
+                        128,
+                        128
+                    ],
+                    "vehicle.trailer": [
+                        255,
+                        255,
+                        255
+                    ],
+                    "vehicle.bicycle": [
+                        128,
+                        255,
+                        0
+                    ],
+                    "vehicle.motorcycle": [
+                        0,
+                        255,
+                        128
+                    ],
+                    "human.pedestrian": [
+                        255,
+                        0,
+                        0
+                    ],
+                    "movable_object.barrier": [
+                        64,
+                        64,
+                        64
+                    ],
+                    "movable_object.trafficcone": [
+                        128,
+                        128,
+                        0
+                    ]
+                },
+                "pen_width": 8
+            },
+            "hdmap_image_settings": {},
+            "image_description_settings": {
+                "path": "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_image/caption_utime_allframe_train.json"
+            }
+        },
+        "transform_list": [
+            {
+                "old_key": "images",
+                "new_key": "vae_images",
+                "transform": {
+                    "_class_name": "torchvision.transforms.Compose",
+                    "transforms": [
+                        {
+                            "_class_name": "torchvision.transforms.Resize",
+                            "size": [
+                                256,
+                                448
+                            ]
+                        },
+                        {
+                            "_class_name": "torchvision.transforms.ToTensor"
+                        },
+                        {
+                            "_class_name": "torchvision.transforms.Normalize",
+                            "mean": [
+                                0.5,
+                                0.5,
+                                0.5
+                            ],
+                            "std": [
+                                0.5,
+                                0.5,
+                                0.5
+                            ]
+                        }
+                    ]
+                }
+            },
+            {
+                "old_key": "3dbox_images",
+                "new_key": "3dbox_images",
+                "transform": {
+                    "_class_name": "torchvision.transforms.Compose",
+                    "transforms": [
+                        {
+                            "_class_name": "torchvision.transforms.Resize",
+                            "size": [
+                                256,
+                                448
+                            ]
+                        },
+                        {
+                            "_class_name": "torchvision.transforms.ToTensor"
+                        }
+                    ]
+                }
+            },
+            {
+                "old_key": "hdmap_images",
+                "new_key": "hdmap_images",
+                "transform": {
+                    "_class_name": "torchvision.transforms.Compose",
+                    "transforms": [
+                        {
+                            "_class_name": "torchvision.transforms.Resize",
+                            "size": [
+                                256,
+                                448
+                            ]
+                        },
+                        {
+                            "_class_name": "torchvision.transforms.ToTensor"
+                        }
+                    ]
+                }
+            },
+            {
+                "old_key": "scene_description",
+                "new_key": "clip_text",
+                "transform": {
+                    "_class_name": "common.Copy"
+                }
+            }
+        ],
+        "pop_list": [
+            "images",
+            "scene_description"
+        ]
+    }
+}

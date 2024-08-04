@@ -340,6 +340,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         action_start: int = 0,
         action_end: int = 4,
         action_only: bool = False,
+        ctx_frame = 1
     ):
         # 0. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
@@ -352,7 +353,13 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         # self.check_inputs(image, height, width)
         if len(image) == 0:
             print('image is blank')
-            image = batch['pil'] # need pil list to best
+            # image = batch['pil'] # need pil list to best
+            
+            # print(len(batch['label_imgs'][0]))
+            # all images
+            image = batch['pils'][0][:ctx_frame]
+            
+            print(len(image))
 
             pils = []
             # numpy to list of pil
@@ -374,6 +381,8 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
             batch_size = 1
         elif isinstance(image, list):
             batch_size = len(image)
+            # multi-frame context
+            batch_size = 1
         else:
             batch_size = image.shape[0]
         device = self._execution_device
@@ -547,6 +556,8 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                
+                print(f'image_latents: {image_latents.shape}')
 
                 noise_pred = self.unet(
                     latent_model_input,

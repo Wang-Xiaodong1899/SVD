@@ -100,11 +100,16 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         transformer_layers_per_block: Union[int, Tuple[int], Tuple[Tuple]] = 1,
         num_attention_heads: Union[int, Tuple[int]] = (5, 10, 20, 20), # NOTE need be (5, 10, 20, 20) align with
         num_frames: int = 8,
-        temp_style: str = "text"
+        temp_style: str = "text",
+        zero_pad: bool = False
     ):
         super().__init__()
 
         self.sample_size = sample_size
+        
+        self.zero_pad = zero_pad
+        
+        print(f'set zero_pad={self.zero_pad}')
 
         # Check inputs
         if len(down_block_types) != len(up_block_types):
@@ -557,7 +562,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     image_only_indicator=image_only_indicator,
                     action=action,
                     image_context=context_frames[idx],
-                    clip_embedding=clip_embedding
+                    clip_embedding=clip_embedding,
+                    zero_pad=self.zero_pad
                 )
             else:
                 # print(f'DOWN No_cross_attention')
@@ -568,6 +574,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     image_only_indicator=image_only_indicator,
                     action=action,
                     image_context=context_frames[idx],
+                    zero_pad=self.zero_pad
                 )
 
             down_block_res_samples += res_samples
@@ -589,7 +596,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
             image_only_indicator=image_only_indicator,
             action=action,
             image_context=context_frames[-1], # smallest feature map
-            clip_embedding=clip_embedding
+            clip_embedding=clip_embedding,
+            zero_pad=self.zero_pad
         )
 
         # resnets lens: 2, 2, 2, 1
@@ -628,7 +636,8 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     encoder_hidden_states=encoder_hidden_states,
                     image_only_indicator=image_only_indicator,
                     image_context = context_frames[-(i+2)],
-                    clip_embedding=clip_embedding
+                    clip_embedding=clip_embedding,
+                    zero_pad=self.zero_pad
                 )
             else:
                 # print(f'UP NO_cross_attention')
@@ -639,6 +648,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
                     res_hidden_states_tuple=res_samples,
                     image_only_indicator=image_only_indicator,
                     image_context = context_frames[-(i+2)],
+                    zero_pad=self.zero_pad
                 )
 
         # 6. post-process

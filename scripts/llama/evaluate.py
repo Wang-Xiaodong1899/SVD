@@ -39,7 +39,7 @@ def numpy_serializable(obj):
     raise TypeError(f"{type(obj)} is not JSON serializable")
 
 
-def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/wm_action2video_freezeactionmodel_bs32/checkpoint-15000/', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/wm_action2video_freezeactionmodel_bs32/checkpoint-15000/', device='cuda:0', zero_pad=False):
     text_encoder = CLIPTextModel.from_pretrained(
                 '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep100', subfolder="text_encoder"
     )
@@ -60,7 +60,7 @@ def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/
     scheduler = DDIMScheduler.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep100', subfolder="scheduler")
     feature_extractor = CLIPImageProcessor.from_pretrained('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-ep100', subfolder="feature_extractor")
 
-    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style = "image")
+    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style = "image", zero_pad=zero_pad)
     if "wm_ckpt.pth" in os.listdir(pretrained_model_name_or_path):
         tensors = torch.load(os.path.join(pretrained_model_name_or_path, 'wm_ckpt.pth'), map_location="cpu")
     else:
@@ -147,11 +147,13 @@ def main(
     debug = False,
     debug_frames = 36,
     times = 1,
-    random_ref_img = False
+    random_ref_img = False,
+    ctx_frame = 1,
+    zero_pad = False
 ):
-    pipeline, tokenizer, config = load_models(pretrained_model_name_or_path, device)
+    pipeline, tokenizer, config = load_models(pretrained_model_name_or_path, device, zero_pad)
 
-    root_dir = root_dir + f'-{debug_frames}-action-{times}'
+    root_dir = root_dir + f'-{debug_frames}-action-{times}-ctxFrame-{ctx_frame}'
 
     if debug:
         root_dir = root_dir + "-debug2"
@@ -170,7 +172,8 @@ def main(
         num_workers=8,
         drop_last=False
     )
-
+    if pretrained_model_name_or_path[-1] == '/':
+        pretrained_model_name_or_path = pretrained_model_name_or_path[:-1]
     paths = pretrained_model_name_or_path.split('/')
     base_model = paths[-2]
     checkpoint = paths[-1]
@@ -209,21 +212,28 @@ def main(
 
         # NOTE
         # 3 -> 22
-        # 5 -> 36
-        for ac_idx in tqdm(range(5)): # 4+4+4
+        # 5 -> 36 (ctx=1)
+        # 8 -> 36 (ctx=4)
+        # 6 -> 38 (ctx=2)
+        rollout = 5
+        if ctx_frame == 4:
+            rollout = 8
+        elif ctx_frame == 2:
+            rollout = 6
+        for ac_idx in tqdm(range(rollout)): # 4+4+4
 
             # ac_idx does not need action_only
             if ac_idx > 0:
                 # action predict only
-                action_hat = pipeline(batch, prompt=prompt, image=last_frame, num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps, action=action, action_start=0, action_end=ac_idx*2*config.n_gram, action_only=True).actions
+                action_hat = pipeline(batch, prompt=prompt, image=last_frame, num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps, action=action, action_start=0, action_end=ac_idx*2*config.n_gram, action_only=True, ctx_frame=ctx_frame).actions
                 action_pred.append(action_hat.cpu())
                 # action + action_pred
                 action = torch.cat([action, action_hat.cpu()], dim=1)
             
             if ac_idx > 0:
                 ac_idx = ac_idx * 2 # action only n_gram + n_gram
-            outputs = pipeline(batch, prompt=prompt, image=last_frame, num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps, action=action, action_start=0, action_end=ac_idx*config.n_gram+config.n_gram)
-
+            outputs = pipeline(batch, prompt=prompt, image=last_frame, num_frames=train_frames, height=192, width=384, min_guidance_scale=cfg_min, max_guidance_scale=cfg_max, num_inference_steps=steps, action=action, action_start=0, action_end=ac_idx*config.n_gram+config.n_gram, ctx_frame=ctx_frame)
+            print(f'last frame: {len(last_frame)}')
             video = outputs.frames
             action_hat = outputs.actions
 
@@ -233,11 +243,12 @@ def main(
             if videos is None:
                 videos = video
             else:
-                videos[0] = videos[0] + video[0][1:]
+                videos[0] = videos[0] + video[0][ctx_frame:]
 
             last_frame = video[0][-1]
             prompt = generate_caption(last_frame, git_processor_large, git_model_large)
-            last_frame = [last_frame]
+            # last_frame = [last_frame]
+            last_frame = video[0][-ctx_frame:]
 
             action_pred.append(action_hat.cpu())
             # action + action_pred
@@ -246,11 +257,13 @@ def main(
         action_pred = torch.cat(action_pred, dim=1) # b l d
 
         print(f'len of final video {len(videos[0])}')
+        print(f'len og final action {len(action_pred)}')
 
 
         names = batch['name']
         scenes = batch['scene']
         imgarr = batch['pil']
+        imgarrs = batch['pils']
         captions = batch['captions']
         # print(type(video)) #list
 
@@ -281,10 +294,13 @@ def main(
             name = os.path.basename(names[i]).split('.')[0]
             os.makedirs(os.path.join(root_dir, version, scenes[i]), exist_ok=True)
             im = Image.fromarray(imgarr[i].numpy().astype('uint8')).convert('RGB')
+            ims = [Image.fromarray(item.numpy().astype('uint8')).convert('RGB') for item in imgarrs[i]]
             # im.save(os.path.join(root_dir, version, scenes[i], f'{name}.jpg'))
             # NOTE if use CFG, you should replace the first frame with ground truth
-            if cfg_max > 1:
-                videos[i][0] = im.resize((384, 192))
+            # if cfg_max > 1:
+            # videos[i][0] = im.resize((384, 192))
+            for ctx in range(ctx_frame):
+                videos[i][ctx] = ims[ctx].resize((384, 192))
             export_to_video(videos[i], os.path.join(root_dir, version, scenes[i], f'{name}.mp4'), fps=6)
 
         # NOTE save actions

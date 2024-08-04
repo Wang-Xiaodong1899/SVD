@@ -665,6 +665,9 @@ def parse_args():
         type=int,
         help="given context frames",
     )
+    parser.add_argument(
+        "--zero_pad", action="store_true", help="Whether or zero pad the image context."
+    )
 
 
     args = parser.parse_args()
@@ -805,7 +808,7 @@ def main():
     
     # for video
     # load model manually to adapt to new state_dicts
-    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style=args.temp_style)
+    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style=args.temp_style, zero_pad=args.zero_pad)
 
     unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
     unet_files = os.listdir(unet_dir)
