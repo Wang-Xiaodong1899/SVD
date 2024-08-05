@@ -10,7 +10,7 @@ import sys
 sys.path.append("/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_image")
 
 if __name__ == "__main__":
-    config_path = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_image/nusc_256p.json"
+    config_path = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_video/nusc_256p_video.json"
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
         
@@ -26,9 +26,9 @@ if __name__ == "__main__":
             config["training_dataset"])
     # print(training_dataset[0].keys())
     
-    batch_size = 1
+    batch_size = 2
     view_count = 1
-    sequence_length = 1
+    sequence_length = 8
     
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -42,26 +42,16 @@ if __name__ == "__main__":
     
     
     for step, batch in enumerate(train_dataloader):
-        _3dbox_images = batch["3dbox_images"].to(device)
+        _3dbox_images = batch["3dbox_images"].to(device) # [bs, seq, view, c, h, w]
         _3dbox_embeddings = layout_encoder\
                     .forward_features(_3dbox_images.flatten(0, 2))\
-                    .flatten(-2).permute(0, 2, 1)
+                    .flatten(-2).permute(0, 2, 1) #[bs*seq*view, 112, 1024]
         hdmap_images = batch["hdmap_images"].to(device)
         hdmap_embeddings = layout_encoder\
                     .forward_features(hdmap_images.flatten(0, 2))\
                     .flatten(-2).permute(0, 2, 1)
-        _3dbox_embeddings = _3dbox_embeddings\
-                        .view(
-                            batch_size, 1, view_count,
-                            *_3dbox_embeddings.shape[1:])\
-                        .repeat(1, sequence_length, 1, 1, 1)
-        hdmap_embeddings = hdmap_embeddings\
-                        .view(
-                            batch_size, 1, view_count,
-                            *hdmap_embeddings.shape[1:])\
-                        .repeat(1, sequence_length, 1, 1, 1)
         
-        caption = batch["image_description"][0]
+        caption = batch["image_description"][0] # the first caption of each batch
         
         inputs = tokenizer(
             caption, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
@@ -73,5 +63,5 @@ if __name__ == "__main__":
         print(encoder_hidden_states.shape)
         
         # vae_images
-        images = batch["pixel_values"].flatten(0, 2)
+        images = batch["vae_images"].flatten(0, 2) # [bs, seq, view, c, h, w]
     

@@ -26,7 +26,7 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPV
 
 from ...image_processor import VaeImageProcessor
 from ...models import AutoencoderKL
-from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
+from diffuser.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
 from ...schedulers import KarrasDiffusionSchedulers
 from ...utils import BaseOutput, logging
 from ...utils.torch_utils import randn_tensor

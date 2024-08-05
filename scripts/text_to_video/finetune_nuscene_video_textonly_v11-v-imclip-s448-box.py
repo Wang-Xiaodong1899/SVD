@@ -37,6 +37,8 @@ from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
+import json
+import common
 
 import sys
 sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/src')
@@ -56,6 +58,9 @@ from safetensors import safe_open
 from collections import OrderedDict
 
 from einops import rearrange, repeat
+import timm
+
+from nuscene_video import _resize_with_antialiasing
 
 if is_wandb_available():
     import wandb
@@ -203,14 +208,14 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/home/wxd/video-generation/diffusers/examples/text_to_image/drive-s256-ep40",
+        default="/mnt/storage/user/wuzehuan/Downloads/models/stable-diffusion-2-1",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
         "--pretrained_clip_model_name_or_path",
         type=str,
-        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/clip-vit-large-patch14",
+        default="/mnt/storage/user/wuzehuan/Downloads/models/CLIP-ViT-H-14-laion2B-s32B-b79K",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -509,6 +514,14 @@ def parse_args():
             "image clip embedding type, pooler_output, last_hidden_state"
         ),
     )
+    parser.add_argument(
+        "--unet-dir",
+        type=str,
+        default=None,
+        help=(
+            "dir for pretrained unet checkpoint"
+        ),
+    )
 
 
     args = parser.parse_args()
@@ -571,12 +584,14 @@ def main():
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-
+    from accelerate import DistributedDataParallelKwargs as DDPK
+    kwargs = DDPK(find_unused_parameters=True)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
+        kwargs_handlers=[kwargs]
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -636,7 +651,7 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         text_encoder = CLIPTextModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
+            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant="fp16"
         )
         vae = AutoencoderKL.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
@@ -644,19 +659,25 @@ def main():
 
         #NOTE add clip vision model
         clip_model = transformers.CLIPModel.from_pretrained(
-        args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
+            args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
 
+        layout_encoder = timm.create_model(model_name="convnextv2_base.fcmae", pretrained=True, num_classes=0)
 
     
     # for video
     # load model manually to adapt to new state_dicts
-    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style=args.temp_style)
+    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=1024, in_channels=4, temp_style=args.temp_style)
 
-    unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
+    unet_dir = args.unet_dir if args.unet_dir else os.path.join(args.pretrained_model_name_or_path, 'unet')  
     unet_files = os.listdir(unet_dir)
     if 'diffusion_pytorch_model.safetensors' in unet_files:
         tensors = {}
         with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
+            for k in f.keys():
+                tensors[k] = f.get_tensor(k)
+    elif 'diffusion_pytorch_model.fp16.safetensors' in unet_files:
+        tensors = {}
+        with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.fp16.safetensors"), framework="pt", device='cpu') as f:
             for k in f.keys():
                 tensors[k] = f.get_tensor(k)
     else:
@@ -694,6 +715,7 @@ def main():
     # Freeze vae and text_encoder and set unet to trainable
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
+    layout_encoder.requires_grad_(False)
     clip_model.requires_grad_(False)
     unet.config.sample_size = 96 # fixed num
 
@@ -813,7 +835,12 @@ def main():
 
     with accelerator.main_process_first():
         train_dataset = VideoAllframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448))
-
+        config_path = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_video/nusc_256p_video.json"
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        
+        train_dataset = common.create_instance_from_config(
+            config["training_dataset"])
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
@@ -855,6 +882,7 @@ def main():
     # Move text_encode and vae to gpu and cast to weight_dtype
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
+    layout_encoder.to(accelerator.device, dtype=weight_dtype)
     clip_model.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -919,6 +947,10 @@ def main():
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
     )
+    
+    clip_transform = transforms.Normalize(
+        transformers.image_utils.OPENAI_CLIP_MEAN,
+        transformers.image_utils.OPENAI_CLIP_STD)
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
@@ -928,7 +960,7 @@ def main():
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
 
-                video_frames = batch["label_imgs"].to(weight_dtype)
+                video_frames = batch["pixel_values"].flatten(1, 2).to(weight_dtype)
                 bs, l, _, _, _ = video_frames.size()
                 video_frames = rearrange(video_frames, 'b l c h w -> (b l) c h w', b=bs, l=l)
 
@@ -950,11 +982,18 @@ def main():
                 else:
                     image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
 
-
+                # TODO prepare clip video
+                # clip video: (bs*seq) c h w
+                clip_video = video_frames
+                clip_video = _resize_with_antialiasing(clip_video, (224, 224))
+                clip_video = (clip_video + 1.0) / 2.0 # -> (0, 1)
+                clip_video = clip_transform(clip_video)
+                clip_video = rearrange(clip_video, '(b l) c h w -> b l c h w', b=bs, l=l)
+                
                 # NOTE get image clip embedding
                 # first clip features
                 vision_output = clip_model.vision_model(
-                    batch["clip_imgs"][:, 0:1].flatten(0, 1)
+                    clip_video[:, 0:1].flatten(0, 1)
                     .to(latents.device, dtype=clip_model.dtype))
                 
                 # ["pooler_output", "last_hidden_state"]
@@ -986,8 +1025,33 @@ def main():
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                # encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                # NOTE concat text features, 3d box embedding, hdmap embedding
+                # text encoder need sd v2.1, we need 1024 dim
+                caption = batch["image_description"][0] # the whole video shared the same caption
+                inputs = tokenizer(
+                    caption, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+                    )
+                text_input = inputs['input_ids'].to(latents.device)
 
+                encoder_hidden_states = text_encoder(text_input)[0]
+                
+                # first 3dbox and hdmap features
+                _3dbox_images = batch["3dbox_images"].to(latents.device)
+                _3dbox_embeddings = layout_encoder\
+                            .forward_features(_3dbox_images[:, 0].flatten(0, 1).to(weight_dtype))\
+                            .flatten(-2).permute(0, 2, 1)
+                # print(f'_3dbox_embeddings: {_3dbox_embeddings.shape}')
+                hdmap_images = batch["hdmap_images"].to(latents.device)
+                hdmap_embeddings = layout_encoder\
+                            .forward_features(hdmap_images[:, 0].flatten(0, 1).to(weight_dtype))\
+                            .flatten(-2).permute(0, 2, 1)
+                # print(f'hdmap_embeddings: {hdmap_embeddings.shape}')
+                # final encoder hidden states
+                encoder_hidden_states = torch.cat([encoder_hidden_states, _3dbox_embeddings, hdmap_embeddings], dim=1)
+
+                # print(f'encoder_hidden_states: {encoder_hidden_states.shape}')
+                
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
                     # set prediction_type of scheduler if defined

@@ -402,3 +402,4 @@ class VideoAllframes(Dataset):
         except Exception as e:
             print('Bad idx %s skipped because of %s' % (index, e))
             return self.__getitem__(np.random.randint(0, self.__len__() - 1))
+

@@ -540,6 +540,7 @@ class TemporalBasicTransformerBlockTextCA(nn.Module):
             # We currently only use AdaLayerNormZero for self attention where there will only be one attention block.
             # I.e. the number of returned modulation chunks from AdaLayerZero would not make sense if returned during
             # the second cross attention block.
+            print(f"cross_attention_dim: {cross_attention_dim}")
             self.norm2 = nn.LayerNorm(time_mix_inner_dim)
             self.attn2 = Attention(
                 query_dim=time_mix_inner_dim,

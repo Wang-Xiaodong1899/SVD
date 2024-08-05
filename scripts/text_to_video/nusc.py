@@ -1153,8 +1153,6 @@ class MotionDataset(torch.utils.data.Dataset):
                     if MotionDataset.check_sensor(
                         self.indices, i, modality="camera")
                 ]
-            
-            result["3dbox_images"][0][0].save(f'3dbox_{index}.jpg')
 
         if self.hdmap_image_settings is not None:
             if self.is_multimodal:
@@ -1178,7 +1176,6 @@ class MotionDataset(torch.utils.data.Dataset):
                     if MotionDataset.check_sensor(
                         self.indices, i, modality="camera")
                 ]
-            result["hdmap_images"][0][0].save(f'hdmap_{index}.jpg')
 
         if self.foreground_region_image_settings is not None:
             if self.is_multimodal:
@@ -1320,8 +1317,6 @@ class MotionDataset(torch.utils.data.Dataset):
                     result["image_description"].append(
                         self.caption_utime[str(utime)]
                     )
-            with open(f'caption_{index}', 'w', encoding='utf-8') as file:
-                file.write(result["image_description"][0])
 
         # add stub values for heterogeneous dataset merging
         for key, data in self.stub_key_data_dict.items():
