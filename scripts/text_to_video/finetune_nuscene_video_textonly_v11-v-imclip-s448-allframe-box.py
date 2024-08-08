@@ -56,6 +56,7 @@ from safetensors import safe_open
 from collections import OrderedDict
 
 from einops import rearrange, repeat
+import timm
 
 if is_wandb_available():
     import wandb
@@ -210,7 +211,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_clip_model_name_or_path",
         type=str,
-        default="/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/clip-vit-large-patch14",
+        default="/mnt/storage/user/wuzehuan/Downloads/models/CLIP-ViT-H-14-laion2B-s32B-b79K",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
@@ -481,7 +482,7 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="ti2v_s448_imclip",
+        default="ti2v_s448_imclip_box_allframe",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -510,10 +511,12 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--ckpt",
+        "--unet-dir",
         type=str,
         default=None,
-        help="resume checkpoint path"
+        help=(
+            "dir for pretrained unet checkpoint"
+        ),
     )
 
 
@@ -577,12 +580,14 @@ def main():
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-
+    from accelerate import DistributedDataParallelKwargs as DDPK
+    kwargs = DDPK(find_unused_parameters=True)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
+        kwargs_handlers=[kwargs]
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -642,27 +647,32 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         text_encoder = CLIPTextModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant=args.variant
+            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision, variant="fp16"
         )
         vae = AutoencoderKL.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
         )
+        layout_encoder = timm.create_model(model_name="convnextv2_base.fcmae", pretrained=True, num_classes=0)
 
         #NOTE add clip vision model
         clip_model = transformers.CLIPModel.from_pretrained(
-        args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
+            args.pretrained_clip_model_name_or_path, torch_dtype=torch.float16)
 
-
-    
     # for video
     # load model manually to adapt to new state_dicts
-    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style=args.temp_style)
+    # text+3dbox+hdmap, 1024 dim
+    unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=1024, in_channels=4, temp_style=args.temp_style)
 
-    unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
+    unet_dir = args.unet_dir if args.unet_dir else os.path.join(args.pretrained_model_name_or_path, 'unet')  
     unet_files = os.listdir(unet_dir)
     if 'diffusion_pytorch_model.safetensors' in unet_files:
         tensors = {}
         with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
+            for k in f.keys():
+                tensors[k] = f.get_tensor(k)
+    elif 'diffusion_pytorch_model.fp16.safetensors' in unet_files:
+        tensors = {}
+        with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.fp16.safetensors"), framework="pt", device='cpu') as f:
             for k in f.keys():
                 tensors[k] = f.get_tensor(k)
     else:
@@ -687,18 +697,6 @@ def main():
         pass
         print('miss_keys: ', miss_keys)
         print('ignore_keys: ', ignore_keys)
-    
-    del new_state_dicts
-    
-    # resume from previous checkpoint
-    if args.ckpt:
-        resume_tensors = {}
-        with safe_open(os.path.join(args.ckpt, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
-            for k in f.keys():
-                resume_tensors[k] = f.get_tensor(k)
-        unet.load_state_dict(resume_tensors, strict=False)
-        print(f'loaded weights from {args.ckpt}')
-        del resume_tensors
 
     optimize_param = []
 
@@ -713,6 +711,7 @@ def main():
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     clip_model.requires_grad_(False)
+    layout_encoder.requires_grad_(False)
     unet.config.sample_size = 96 # fixed num
 
 
@@ -874,6 +873,7 @@ def main():
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
     clip_model.to(accelerator.device, dtype=weight_dtype)
+    layout_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -1005,6 +1005,21 @@ def main():
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                
+                # NOTE add 3dbox and hdmap embedding
+                # 3dbox and hdmap features
+                _3dbox_images = batch["3dbox"].to(latents.device) # b c h w
+                _3dbox_embeddings = layout_encoder\
+                            .forward_features(_3dbox_images.to(weight_dtype))\
+                            .flatten(-2).permute(0, 2, 1)
+                hdmap_images = batch["hdmap"].to(latents.device)
+                hdmap_embeddings = layout_encoder\
+                            .forward_features(hdmap_images.to(weight_dtype))\
+                            .flatten(-2).permute(0, 2, 1)
+                
+                # final encoder hidden states (1024 dim)
+                encoder_hidden_states = torch.cat([encoder_hidden_states, _3dbox_embeddings, hdmap_embeddings], dim=1)
+
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:

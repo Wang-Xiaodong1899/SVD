@@ -350,6 +350,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         action: torch.FloatTensor = None,
         image_context: torch.FloatTensor = None,
         prompt: Union[str, List[str]] = None,
+        prompt_embeds: torch.FloatTensor = None,
     ):
         r"""
         The call function to the pipeline for generation.
@@ -453,25 +454,26 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         # 3. Encode input image
         image_embeddings = self._encode_image(image, device, num_videos_per_prompt, do_classifier_free_guidance)
         # 3. Encode text prompt
-        text_inputs = self.tokenizer(
-                prompt,
-                padding="max_length",
-                max_length=self.tokenizer.model_max_length,
-                truncation=True,
-                return_tensors="pt",
-            )
-        text_input_ids = text_inputs.input_ids
-        prompt_embeds = self.text_encoder(text_input_ids.to(device), attention_mask=None)
-        prompt_embeds = prompt_embeds[0]
+        if prompt_embeds is None:
+            text_inputs = self.tokenizer(
+                    prompt,
+                    padding="max_length",
+                    max_length=self.tokenizer.model_max_length,
+                    truncation=True,
+                    return_tensors="pt",
+                )
+            text_input_ids = text_inputs.input_ids
+            prompt_embeds = self.text_encoder(text_input_ids.to(device), attention_mask=None)
+            prompt_embeds = prompt_embeds[0]
 
-        if self.text_encoder is not None:
-            prompt_embeds_dtype = self.text_encoder.dtype
-        elif self.unet is not None:
-            prompt_embeds_dtype = self.unet.dtype
-        else:
-            prompt_embeds_dtype = prompt_embeds.dtype
+            if self.text_encoder is not None:
+                prompt_embeds_dtype = self.text_encoder.dtype
+            elif self.unet is not None:
+                prompt_embeds_dtype = self.unet.dtype
+            else:
+                prompt_embeds_dtype = prompt_embeds.dtype
 
-        prompt_embeds = prompt_embeds.to(dtype=prompt_embeds_dtype, device=device)
+            prompt_embeds = prompt_embeds.to(dtype=prompt_embeds_dtype, device=device)
 
         # check prompt_embeds shape
         print(f'text emb shape: ', prompt_embeds.shape)

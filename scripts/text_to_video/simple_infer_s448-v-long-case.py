@@ -98,11 +98,11 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
 
 def main(
     pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/ti2v_s448_imclip/checkpoint-16000',
-    num_frames = 36,
+    num_frames = 204,
     root_dir = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/FVD-allframe-first',
     train_frames = 8,
     device='cuda',
-    roll_out= 4,
+    roll_out= 28,
     width = 448,
     height = 256,
 ):
@@ -134,6 +134,12 @@ def main(
         # if idx>5:
         #     break
         sce = item['scene']
+        selected_scenes = [
+            'scene-0018', 'scene-0036', 'scene-0097', 'scene-0221', 'scene-0273', 'scene-0275', 'scene-0519', 'scene-0521',
+            'scene-0559', 'scene-0563'
+        ]
+        if sce not in selected_scenes:
+            continue
         samples = item['samples']
         file = samples[0]
         if file.split('.')[-1] == 'jpg' or file.split('.')[-1] == 'png':

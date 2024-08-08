@@ -16,6 +16,9 @@ from PIL import Image
 import fire
 from safetensors import safe_open
 
+import timm
+from torchvision import transforms
+
 from common import json2data
 
 from diffusers.utils import export_to_video
@@ -32,7 +35,7 @@ from diffuser.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/ti2v_s448_imclip/checkpoint-16000', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/ti2v_s448_imclip/checkpoint-12000', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
                 '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/image-allframes-ep100-checkpoint-30000', subfolder="text_encoder",
     )
@@ -97,14 +100,12 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
     return generated_caption[0]
 
 def main(
-    pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/ti2v_s448_imclip/checkpoint-16000',
+    pretrained_model_name_or_path = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels-vis/ti2v_s448_imclip/checkpoint-12000',
     num_frames = 36,
     root_dir = '/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/FVD-allframe-first',
     train_frames = 8,
     device='cuda',
     roll_out= 4,
-    width = 448,
-    height = 256,
 ):
     pipeline = load_models(pretrained_model_name_or_path, device)
 
@@ -129,10 +130,42 @@ def main(
     git_processor_large = AutoProcessor.from_pretrained("/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/git-large-coco")
     git_model_large = AutoModelForCausalLM.from_pretrained("/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/smodels/git-large-coco")
     print('loaded caption model!')
+    
+    # layout encoder
+
+    layout_encoder = timm.create_model(model_name="convnextv2_base.fcmae", pretrained=True, num_classes=0)
+    layout_encoder.to(device)
+    layout_encoder = layout_encoder.half()
+    
+    # transform
+    cond_transform = transforms.Compose([
+        transforms.Resize((256, 448)),
+        transforms.ToTensor()
+    ])
+    
+    index = 18843
+    _3dbox_image_path = f"/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/3dbox_{index}.jpg"
+    hdmap_image_path = f"/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/hdmap_{index}.jpg"
+    _3dbox_image = Image.open(_3dbox_image_path)
+    hdmap_image = Image.open(hdmap_image_path)
+    _3dbox = transform(_3dbox_image)
+    hdmap = transform(hdmap_image)
+    _3dbox = _3dbox.unsqueeze(0).to(device)
+    hdmap = hdmap.unsqueeze(0).to(device)
+    
+    weight_dtype = torch.float16
+    _3dbox_embeddings = layout_encoder\
+        .forward_features(_3dbox.to(weight_dtype))\
+        .flatten(-2).permute(0, 2, 1)
+    hdmap_embeddings = layout_encoder\
+        .forward_features(hdmap.to(weight_dtype))\
+        .flatten(-2).permute(0, 2, 1)
+    hdmap_embeddings.shape
+    
 
     for idx, item in tqdm(enumerate(meta_data)):
-        # if idx>5:
-        #     break
+        if idx>1:
+            break
         sce = item['scene']
         samples = item['samples']
         file = samples[0]
@@ -144,16 +177,16 @@ def main(
         image = Image.open(image_path)
         prompt = generate_caption(image, git_processor_large, git_model_large)
 
-        video = pipeline(image, num_frames=train_frames, prompt=prompt, action=None, height=height, width=width).frames[0]
+        video = pipeline(image, num_frames=train_frames, prompt=prompt, action=None, height=256, width=448).frames[0]
         # replace first frame
-        video[0] = image.resize((width, height))
+        video[0] = image.resize((448, 256))
         # print(f'len of first {len(video)}')
         # 8 + 7 -> 15 frames
         # video[0] = image.convert('RGB').resize((384, 192))
         for t in range(roll_out):
             last_frame = video[-1]
             prompt = generate_caption(last_frame, git_processor_large, git_model_large)
-            video_2 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=height, width=width).frames[0]
+            video_2 = pipeline(last_frame, num_frames=train_frames, prompt=prompt, action=None, height=256, width=448).frames[0]
             video = video + video_2[1:]
         
         print(f'len of final video {len(video)}')

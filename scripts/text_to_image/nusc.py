@@ -1153,8 +1153,11 @@ class MotionDataset(torch.utils.data.Dataset):
                     if MotionDataset.check_sensor(
                         self.indices, i, modality="camera")
                 ]
-            
-            result["3dbox_images"][0][0].save(f'3dbox_{index}.jpg')
+            utime = item["segment"][0][0]["timestamp"]
+            print(utime)
+            result["images"][0][0].save((os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/mini_3dbox_hdmap', f'{utime}.jpg')))
+            # NOTE save 3dbox and hdmap by utime
+            result["3dbox_images"][0][0].save(os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/mini_3dbox_hdmap', f'3dbox_{utime}.jpg'))
 
         if self.hdmap_image_settings is not None:
             if self.is_multimodal:
@@ -1178,7 +1181,8 @@ class MotionDataset(torch.utils.data.Dataset):
                     if MotionDataset.check_sensor(
                         self.indices, i, modality="camera")
                 ]
-            result["hdmap_images"][0][0].save(f'hdmap_{index}.jpg')
+            utime = item["segment"][0][0]["timestamp"]
+            result["hdmap_images"][0][0].save(os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/mini_3dbox_hdmap', f'hdmap_{utime}.jpg'))
 
         if self.foreground_region_image_settings is not None:
             if self.is_multimodal:
@@ -1320,7 +1324,8 @@ class MotionDataset(torch.utils.data.Dataset):
                     result["image_description"].append(
                         self.caption_utime[str(utime)]
                     )
-            with open(f'caption_{index}', 'w', encoding='utf-8') as file:
+            utime = item["segment"][0][0]["timestamp"]
+            with open(os.path.join('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/mini_3dbox_hdmap', f'caption_{utime}.txt'), 'w', encoding='utf-8') as file:
                 file.write(result["image_description"][0])
 
         # add stub values for heterogeneous dataset merging

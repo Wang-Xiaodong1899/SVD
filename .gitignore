@@ -193,3 +193,6 @@ FVD-Act*
 smodels-vis
 **.pth
 smodels
+caption*
+Nusc_keyframe_3dbox_hdmap_utime
+Nusc_keyframe_3dbox_hdmap_utime.zip

@@ -285,6 +285,11 @@ class VideoAllframes(Dataset):
                 transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
             ])
         
+        self.cond_transform = transforms.Compose([
+                transforms.Resize((256, 448)),
+                transforms.ToTensor()
+            ])
+        
         self.clip_transform = transforms.Normalize(
                 transformers.image_utils.OPENAI_CLIP_MEAN,
                 transformers.image_utils.OPENAI_CLIP_STD)
@@ -294,6 +299,9 @@ class VideoAllframes(Dataset):
         json_path = f'/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_image/caption_utime_allframe_{split}.json'
         with open(json_path, 'r') as f:
             self.caption_utime = json.load(f)
+        
+        # NOTE add 3dbox, hdmap images
+        self.condition_root = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/Nusc_keyframe_3dbox_hdmap_utime"
         
         # scenes num
         print('Total samples: %d' % len(self.samples))
@@ -356,7 +364,11 @@ class VideoAllframes(Dataset):
             # print(f'inner_frame_len: {inner_frame_len}')
 
             # always skip 1 frame
-            seek_start = random.randint(0, inner_frame_len - self.max_video_len)
+            seek_sample = None
+            while seek_sample is None or not seek_sample['is_key_frame']:
+                seek_start = random.randint(0, inner_frame_len - self.max_video_len)
+                seek_sample = my_sample_list[seek_start]
+            
             seek_samples = my_sample_list[seek_start: seek_start+self.max_video_len]
 
             # for first sample
@@ -366,6 +378,17 @@ class VideoAllframes(Dataset):
             desc = self.nusc.get('scene', scene_token)["description"]
             utime = my_sample['timestamp']
             first_image_caption = self.caption_utime[str(utime)]
+            
+            # NOTE because random choose, not alway have the utime
+            
+            _3dbox_path = os.path.join(self.condition_root, f"3dbox_{utime}.jpg")
+            hdmap_path = os.path.join(self.condition_root, f"hdmap_{utime}.jpg")
+            
+            _3dbox_image = Image.open(_3dbox_path).convert('RGB')
+            hdmap_image = Image.open(hdmap_path).convert('RGB')
+            
+            _3dbox = self.cond_transform(_3dbox_image)
+            hdmap = self.cond_transform(hdmap_image)
             
             # clip all frames
             frame_paths = []
@@ -396,6 +419,8 @@ class VideoAllframes(Dataset):
             return {
                 'input_ids': inputs_id,
                 'label_imgs': imgs,
+                '3dbox': _3dbox,
+                'hdmap': hdmap,
                 'clip_imgs': clip_video
             }
             
@@ -403,3 +428,107 @@ class VideoAllframes(Dataset):
             print('Bad idx %s skipped because of %s' % (index, e))
             return self.__getitem__(np.random.randint(0, self.__len__() - 1))
 
+
+
+class VideoValframes(Dataset):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='val', max_video_len = 8, img_size=(256, 448), data_root="/mnt/storage/user/wangxiaodong/nuscenes-all"):
+        super().__init__()
+        self.tokenizer = tokenizer
+        self.args = args
+        self.split = split
+        self.max_video_len = max_video_len
+        self.action_scale = 1
+        clip_size = (224, 224)
+        
+        self.data_root = data_root if data_root else DATAROOT
+        
+        self.nusc = NuScenes(version='v1.0-trainval', dataroot=self.data_root, verbose=True)
+
+        self.splits = create_splits_scenes()
+
+        # training samples
+        self.samples = self.get_samples(split)
+
+        # image transform
+        self.transform = transforms.Compose([
+                transforms.ToPILImage('RGB'),
+                transforms.Resize(img_size),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+            ])
+        
+
+        # scenes num
+        print('Total samples: %d' % len(self.samples))
+    
+    def augmentation(self, frame, transform, state):
+        torch.set_rng_state(state)
+        return transform(frame)
+    
+    def __len__(self):
+        return len(self.samples)
+    
+    
+    def get_all_frames_from_scene(self, scene):
+        # get all frames (keyframes, sweeps)
+        first_sample_token = scene['first_sample_token']
+        my_sample = self.nusc.get('sample', first_sample_token)
+        sensor = "CAM_FRONT"
+        cam_front_data = self.nusc.get('sample_data', my_sample['data'][sensor]) # first frame sensor token
+        # frames = 0
+        all_frames_dict = [] # len() -> frame number
+        while True:
+            all_frames_dict.append(cam_front_data)
+            # filename = cam_front_data['filename']  # current-frame filename
+            next_sample_data_token = cam_front_data['next']  # next-frame sensor token
+            if not next_sample_data_token: # ''
+                break
+            cam_front_data = self.nusc.get('sample_data', next_sample_data_token)
+            # frames += 1
+        
+        return all_frames_dict
+    
+    
+    def get_samples(self, split='train'):
+        selected_scenes = self.splits[split] # all scenes
+        all_scenes = self.nusc.scene
+        selected_scenes_meta = []
+        for sce in all_scenes:
+            if sce['name'] in selected_scenes:
+                selected_scenes_meta.append(sce)
+        
+        samples_group_by_scene = []
+        for scene in selected_scenes_meta:
+            samples_group_by_scene.append(
+                {
+                'scene': scene['name'],
+                'video': self.get_all_frames_from_scene(scene)
+                }
+            )
+        
+        return samples_group_by_scene
+    
+    
+    def __getitem__(self, index):
+        try:
+            my_scene = self.samples[index]
+            
+            my_sample_list = my_scene["video"]
+            inner_frame_len = len(my_sample_list)
+
+            # for first sample
+            my_sample = my_sample_list[0]
+            sample_token = my_sample["sample_token"]
+            scene_token = self.nusc.get('sample', sample_token)["scene_token"]
+            desc = self.nusc.get('scene', scene_token)["description"]
+            utime = my_sample['timestamp']
+            filename = my_sample["filename"]
+
+            return {
+                'filename': [filename],
+                'utime': [utime]
+            }
+            
+        except Exception as e:
+            print('Bad idx %s skipped because of %s' % (index, e))
+            return self.__getitem__(np.random.randint(0, self.__len__() - 1))

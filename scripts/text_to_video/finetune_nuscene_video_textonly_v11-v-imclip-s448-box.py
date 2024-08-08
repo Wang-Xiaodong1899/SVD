@@ -53,7 +53,7 @@ from diffusers.utils import check_min_version, deprecate, is_wandb_available, ma
 from diffusers.utils.import_utils import is_xformers_available
 
 
-from nuscene_video import Videoframes, VideoAllframes
+from nuscene_video import Videoframes
 from safetensors import safe_open
 from collections import OrderedDict
 
@@ -834,7 +834,6 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = VideoAllframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448))
         config_path = "/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/scripts/text_to_video/nusc_256p_video.json"
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
