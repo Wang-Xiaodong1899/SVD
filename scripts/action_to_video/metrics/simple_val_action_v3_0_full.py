@@ -2,7 +2,7 @@
 # This file is for aliyun 1-GPU test
 
 import sys
-sys.path.append('/workspace/wxd/SVD/src')
+sys.path.append('/root/SVD/src')
 sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug')
 
 import os
