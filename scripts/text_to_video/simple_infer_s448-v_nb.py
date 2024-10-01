@@ -106,7 +106,7 @@ width = 448
 height = 256
 
 for i in range(1):
-    image_path = f"nusc_test.jpg"
+    image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test.jpg"
 
     root_dir = "nusc_test"
     image = Image.open(image_path)
