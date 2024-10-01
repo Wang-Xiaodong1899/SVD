@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/workspace/wxd/SVD')
+sys.path.append('/workspace/wxd/SVD/src')
 
 import os
 import torch

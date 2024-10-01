@@ -13,7 +13,7 @@ from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
 import sys
-sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/src')
+sys.path.append('/workspace/wxd/SVD/src')
 
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel

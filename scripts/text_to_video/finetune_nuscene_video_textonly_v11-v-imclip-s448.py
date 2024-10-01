@@ -39,7 +39,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/mnt/storage/user/wangxiaodong/DWM_work_dir/lidar_maskgit_debug/src')
+sys.path.append('/workspace/wxd/SVD/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
