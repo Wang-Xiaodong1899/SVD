@@ -25,7 +25,7 @@ from diffuser.pipelines.stable_video_diffusion.pipeline_action_video_diffusion_v
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 def load_models(pretrained_model_name_or_path = '/root/autodl-fs/smodels-vis/ti2v_s448_imclip/checkpoint-6000', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
@@ -98,7 +98,7 @@ git_processor_large = AutoProcessor.from_pretrained("/root/autodl-fs/smodels/git
 git_model_large = AutoModelForCausalLM.from_pretrained("/root/autodl-fs/smodels/git-large-coco")
 print('loaded caption model!')
 
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 num_frames = 36
 train_frames = 8
@@ -108,7 +108,7 @@ width = 448
 height = 256
 
 for i in range(1):
-    image_path = f"/root/SVD/scripts/text_to_video/nusc_test.jpg"
+    image_path = f"/root/SVD/scripts/text_to_video/nusc_test_2.jpg"
 
     root_dir = "nusc_test"
     image = Image.open(image_path)
