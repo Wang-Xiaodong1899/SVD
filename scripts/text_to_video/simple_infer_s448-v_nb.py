@@ -96,7 +96,7 @@ git_processor_large = AutoProcessor.from_pretrained("/volsparse1/wxd/smodels/git
 git_model_large = AutoModelForCausalLM.from_pretrained("/volsparse1/wxd/smodels/git-large-coco")
 print('loaded caption model!')
 
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 num_frames = 36
 train_frames = 8
@@ -106,7 +106,7 @@ width = 448
 height = 256
 
 for i in range(1):
-    image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test.jpg"
+    image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test/{i}.jpg"
 
     root_dir = "nusc_test"
     image = Image.open(image_path)
