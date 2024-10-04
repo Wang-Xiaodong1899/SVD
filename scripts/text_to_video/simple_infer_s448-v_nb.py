@@ -105,9 +105,10 @@ roll_out= 4
 width = 448
 height = 256
 
-for i in range(1, 2):
-    image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test/{i}.jpg"
-
+for name in os.listdir("/workspace/wxd/SVD/scripts/text_to_video/scene_samples"):
+    image_path = os.path.join("/workspace/wxd/SVD/scripts/text_to_video/scene_samples/", name)
+    if not name.lower().endswith('.jpg'):
+        continue
     root_dir = "nusc_test"
     image = Image.open(image_path)
     prompt = generate_caption(image, git_processor_large, git_model_large)
