@@ -105,7 +105,7 @@ roll_out= 4
 width = 448
 height = 256
 
-for i in range(1):
+for i in range(1, 2):
     image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test/{i}.jpg"
 
     root_dir = "nusc_test"
