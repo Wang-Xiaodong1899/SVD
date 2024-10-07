@@ -150,9 +150,9 @@ class OVkeyframes(Dataset):
         self.splits = create_splits_scenes()
 
         # training samples
-        samples_groups = self.group_sample_by_scene(split)
+        self.samples_groups = self.group_sample_by_scene(split)
         
-        scenes = list(samples_groups.keys())
+        scenes = list(self.samples_groups.keys())
         
         self.all_image_paths = []
         self.search_keys = []
@@ -169,7 +169,7 @@ class OVkeyframes(Dataset):
             
             selected_index = list(range(len(image_paths)))
             for index in selected_index:
-                self.search_keys.append((my_scene, f"{index}"))
+                self.search_keys.append((my_scene, f"{index//4*4}"))
 
         # image transform
         self.transform = transforms.Compose([
@@ -215,7 +215,7 @@ class OVkeyframes(Dataset):
     def get_image_path_from_sample(self, my_sample):
         sample_data = self.nusc.get('sample_data', my_sample['data']['CAM_FRONT'])
         file_path = sample_data['filename']
-        image_path = os.path.join(DATAROOT, file_path)
+        image_path = os.path.join(self.data_root, file_path)
         return image_path
     
     def get_paths_from_scene(self, my_scene):
@@ -260,8 +260,3 @@ class OVkeyframes(Dataset):
         except Exception as e:
             print('Bad idx %s skipped because of %s' % (index, e))
             return self.__getitem__(np.random.randint(0, self.__len__() - 1))
-
-# test
-
-dataset = OVkeyframes()
-print(dataset[0])
