@@ -184,7 +184,7 @@ class OVkeyframes(Dataset):
         print('Total samples: %d' % len(self.all_image_paths))
 
         # search annotations
-        json_path = f'/root/SVD/nusc_video_{split}_8_ov-7b_dict.json'
+        json_path = f'/workspace/wxd/SVD/nusc_video_{split}_8_ov-7b_dict.json'
         with open(json_path, 'r') as f:
             self.annotations = json.load(f)
     
