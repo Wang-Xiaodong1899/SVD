@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/root/SVD/src')
+sys.path.append('/workspace/wxd/SVD/src')
 
 import os
 import torch
@@ -27,15 +27,15 @@ from transformers import AutoProcessor, AutoModelForCausalLM
 
 # import pdb; pdb.set_trace()
 
-def load_models(pretrained_model_name_or_path = '/root/autodl-fs/smodels-vis/ti2v_s448_imclip/checkpoint-6000', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/volsparse1/wxd/smodels-vis/ti2v_s448_imclip/checkpoint-6000', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
-                '/root/autodl-fs/smodels/stable-diffusion-v1-4', subfolder="text_encoder",
+                '/volsparse1/wxd/smodels/stable-diffusion-v1-4', subfolder="text_encoder",
     )
     vae = AutoencoderKL.from_pretrained(
-                '/root/autodl-fs/smodels/stable-diffusion-v1-4', subfolder="vae",
+                '/volsparse1/wxd/smodels/stable-diffusion-v1-4', subfolder="vae",
     )
     clip_model = CLIPModel.from_pretrained(
-        "/root/autodl-fs/smodels/clip-vit-large-patch14", torch_dtype=torch.float16)
+        "/volsparse1/wxd/smodels/clip-vit-large-patch14", torch_dtype=torch.float16)
 
     text_encoder.eval()
     vae.eval()
@@ -44,9 +44,9 @@ def load_models(pretrained_model_name_or_path = '/root/autodl-fs/smodels-vis/ti2
     vae.to(device)
     clip_model.to(device)
 
-    tokenizer = CLIPTokenizer.from_pretrained('/root/autodl-fs/smodels/stable-diffusion-v1-4', subfolder="tokenizer")
-    scheduler = DDPMScheduler.from_pretrained('/root/autodl-fs/smodels/stable-diffusion-v1-4', subfolder="scheduler")
-    feature_extractor = CLIPImageProcessor.from_pretrained('/root/autodl-fs/smodels/stable-diffusion-v1-4', subfolder="feature_extractor")
+    tokenizer = CLIPTokenizer.from_pretrained('/volsparse1/wxd/smodels/stable-diffusion-v1-4', subfolder="tokenizer")
+    scheduler = DDPMScheduler.from_pretrained('/volsparse1/wxd/smodels/stable-diffusion-v1-4', subfolder="scheduler")
+    feature_extractor = CLIPImageProcessor.from_pretrained('/volsparse1/wxd/smodels/stable-diffusion-v1-4', subfolder="feature_extractor")
 
     # unet = UNetSpatioTemporalConditionModel_Action.from_pretrained(pretrained_model_name_or_path, subfolder="unet")
     # unet.temp_style = "image" # use image clip embedding
@@ -91,11 +91,11 @@ def generate_caption(image, git_processor_large, git_model_large, device='cuda:0
    
     return generated_caption[0]
 
-pretrained_model_name_or_path = '/root/autodl-fs/smodels-vis/ti2v_s448_imclip/checkpoint-6000'
+pretrained_model_name_or_path = '/volsparse1/wxd/smodels-vis/ti2v_s448_imclip/checkpoint-6000'
 pipeline = load_models(pretrained_model_name_or_path, "cuda:0")
 
-git_processor_large = AutoProcessor.from_pretrained("/root/autodl-fs/smodels/git-large-coco")
-git_model_large = AutoModelForCausalLM.from_pretrained("/root/autodl-fs/smodels/git-large-coco")
+git_processor_large = AutoProcessor.from_pretrained("/volsparse1/wxd/smodels/git-large-coco")
+git_model_large = AutoModelForCausalLM.from_pretrained("/volsparse1/wxd/smodels/git-large-coco")
 print('loaded caption model!')
 
 # import pdb; pdb.set_trace()

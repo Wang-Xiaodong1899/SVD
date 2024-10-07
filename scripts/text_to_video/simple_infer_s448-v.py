@@ -2,7 +2,7 @@
 # This file is for aliyun 1-GPU test
 
 import sys
-sys.path.append('/root/SVD/src')
+sys.path.append('/workspace/wxd/SVD/src')
 
 import os
 import torch

@@ -29,7 +29,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/root/SVD/src')
+sys.path.append('/workspace/wxd/SVD/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
@@ -685,7 +685,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = OVkeyframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448), data_root="/root/autodl-tmp/nuscenes/all/")
+        train_dataset = OVkeyframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448), data_root="/volsparse1/wxd/data/nuscenes/")
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(

@@ -32,7 +32,7 @@ import json
 import common
 
 import sys
-sys.path.append('/root/SVD/src')
+sys.path.append('/workspace/wxd/SVD/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel

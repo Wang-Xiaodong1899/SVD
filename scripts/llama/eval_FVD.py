@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/root/SVD/src')
+sys.path.append('/workspace/wxd/SVD/src')
 
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer

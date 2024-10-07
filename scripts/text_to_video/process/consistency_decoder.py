@@ -6,10 +6,10 @@ device="cuda:0"
 
 # encode with stable diffusion vae
 # pipe = StableDiffusionPipeline.from_pretrained(
-#     "/root/autodl-fs/smodels/stable-diffusion-v1-4", torch_dtype=torch.float16, device="cuda:0"
+#     "/volsparse1/wxd/smodels/stable-diffusion-v1-4", torch_dtype=torch.float16, device="cuda:0"
 # )
 vae = AutoencoderKL.from_pretrained(
-                '/root/autodl-fs/smodels/stable-diffusion-v1-4', subfolder="vae",
+                '/volsparse1/wxd/smodels/stable-diffusion-v1-4', subfolder="vae",
     )
 vae.eval()
 vae.to(device)

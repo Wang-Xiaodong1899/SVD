@@ -138,7 +138,7 @@ class Allframes(Dataset):
 
 
 class OVkeyframes(Dataset):
-    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', img_size=(256, 448), data_root="/root/autodl-tmp/nuscenes/all/"):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', img_size=(256, 448), data_root="/volsparse1/wxd/data/nuscenes/"):
         super().__init__()
         self.tokenizer = tokenizer
         self.args = args
