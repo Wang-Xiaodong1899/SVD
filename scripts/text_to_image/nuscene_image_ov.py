@@ -230,7 +230,9 @@ class OVkeyframes(Dataset):
             search_key = self.search_keys[index]
             
             # get dict
-            annotation = self.annotations[search_key[0]][search_key[1]]
+            scene_annotation = self.annotations[search_key[0]]
+            timestep = search_key[1] if search_key[1] in scene_annotation else str((int(search_key[1])//4-1)*4)
+            annotation = scene_annotation[timestep]
             
             caption = ""
             selected_attr = ["Weather", "Time", "Road environment", "Critical objects"]
