@@ -138,7 +138,7 @@ class Allframes(Dataset):
 
 
 class OVkeyframes(Dataset):
-    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', img_size=(256, 448), data_root="/mnt/storage/user/wangxiaodong/nuscenes-all"):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', img_size=(256, 448), data_root="/root/autodl-tmp/nuscenes/all/"):
         super().__init__()
         self.tokenizer = tokenizer
         self.args = args
@@ -253,3 +253,8 @@ class OVkeyframes(Dataset):
         except Exception as e:
             print('Bad idx %s skipped because of %s' % (index, e))
             return self.__getitem__(np.random.randint(0, self.__len__() - 1))
+
+# test
+
+dataset = OVkeyframes()
+print(dataset[0])
