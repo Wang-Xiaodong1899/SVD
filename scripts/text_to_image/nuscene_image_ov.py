@@ -242,7 +242,7 @@ class OVkeyframes(Dataset):
                     anno = anno[:-1] 
                 caption = caption + anno + ". "
             
-            print(caption)
+            # print(caption)
 
             image = Image.open(image_path).convert('RGB')
             image = self.transform(image)
