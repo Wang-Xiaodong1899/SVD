@@ -236,6 +236,8 @@ class OVkeyframes(Dataset):
             selected_attr = ["Weather", "Time", "Road environment", "Critical objects"]
             for attr in selected_attr:
                 caption = caption + annotation.get(attr, "")
+            
+            print(caption)
 
             image = Image.open(image_path).convert('RGB')
             image = self.transform(image)
