@@ -235,7 +235,12 @@ class OVkeyframes(Dataset):
             caption = ""
             selected_attr = ["Weather", "Time", "Road environment", "Critical objects"]
             for attr in selected_attr:
-                caption = caption + annotation.get(attr, "")
+                anno = annotation.get(attr, "")
+                if anno == "":
+                    continue
+                if anno[-1] == ".":
+                    anno = anno[:-1] 
+                caption = caption + anno + ". "
             
             print(caption)
 
