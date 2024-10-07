@@ -38,7 +38,8 @@ from diffusers.training_utils import EMAModel, compute_snr
 from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
 from diffusers.utils.import_utils import is_xformers_available
 
-from nuscene_image import Allframes
+# from nuscene_image import Allframes
+from nuscene_image_ov import OVkeyframes
 
 
 if is_wandb_available():
@@ -465,7 +466,7 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2i-ft-allframe-s448-e",
+        default="t2i-ovanno-ft-keyframe-s448-e",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -684,8 +685,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Allframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448))
-
+        train_dataset = OVkeyframes(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448), data_root="/root/autodl-tmp/nuscenes/all/")
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
