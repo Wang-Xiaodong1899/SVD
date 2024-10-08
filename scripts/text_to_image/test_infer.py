@@ -5,6 +5,7 @@ import sys
 sys.path.append('/workspace/wxd/SVD/src')
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPModel, CLIPImageProcessor
 from diffusers import StableDiffusionPipeline, AutoencoderKL, DDIMScheduler, UNet2DConditionModel
+from consistencydecoder import ConsistencyDecoder, save_image, load_image
 
 # prepare components
 device = 'cuda:0'
@@ -15,12 +16,14 @@ pipeline = StableDiffusionPipeline.from_pretrained(
             )
 pipeline = pipeline.to(device).to(torch.float16)
 
+decoder_consistency = ConsistencyDecoder(device=device) # Model size: 2.49 GB
+
 import pdb; pdb.set_trace()
 
 count = 0
 
 while True:
     prompt = input()
-    image = pipeline(prompt=prompt,height=256, width=448).images[0]
+    image = pipeline(prompt=prompt,height=256, width=448, guidance_scale=7.5).images[0]
     image.save(f'ov-sd-gen_{count}.jpg')
     count = count + 1
