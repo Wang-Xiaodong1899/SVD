@@ -316,8 +316,10 @@ class TransformerSpatioTemporalModel(nn.Module):
         batch_size = batch_frames // num_frames
 
         # time_context = encoder_hidden_states # Original (B*F, 77, C)
-
-        if "image" in self.temp_style:
+        
+        if "action" in self.temp_style:
+            time_context = clip_embedding # pass action text encoder_hidden_states as clip_embedding
+        elif "image" in self.temp_style:
             if 'text' in self.temp_style:
                 time_context = torch.cat([clip_embedding, encoder_hidden_states], dim=1)
             else:
@@ -329,7 +331,6 @@ class TransformerSpatioTemporalModel(nn.Module):
             # pure text
             time_context = encoder_hidden_states
         
-
         # time_context_first_timestep = time_context[None, :].reshape(
         #     batch_size, num_frames, -1, time_context.shape[-1]
         # )[:, 0]

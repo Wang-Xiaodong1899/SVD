@@ -470,8 +470,14 @@ class OVkeyframeVideo(Dataset):
                 transforms.ToTensor(),
                 transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
             ])
+        
+        self.clip_transform = transforms.Normalize(
+                transformers.image_utils.OPENAI_CLIP_MEAN,
+                transformers.image_utils.OPENAI_CLIP_STD)
+        clip_size = (224, 224)
+        self.clip_resize = transforms.Resize(clip_size)
 
-        print('Total samples: %d' % len(self.all_image_paths))
+        print('Total samples: %d' % len(self.scenes))
 
         # search annotations
         json_path = f'/root/SVD/nusc_video_{split}_8_ov-7b_dict.json'
