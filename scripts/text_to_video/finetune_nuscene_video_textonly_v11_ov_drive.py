@@ -48,7 +48,7 @@ from diffusers.utils import check_min_version, deprecate, is_wandb_available, ma
 from diffusers.utils.import_utils import is_xformers_available
 
 
-from nuscene_video import Videoframes
+from nuscene_video_ov import OVkeyframeVideo
 from safetensors import safe_open
 from collections import OrderedDict
 
@@ -200,7 +200,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/home/wxd/video-generation/diffusers/examples/text_to_image/drive-s256-ep40",
+        default="/root/autodl-fs/smodels/image-keyframes-ep30",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
@@ -525,7 +525,7 @@ def get_add_time_ids(
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/mnt/lustrenew/wangxiaodong/smodels', args.output_dir)
+    args.output_dir = os.path.join('/root/autodl-fs/smodels-video', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
@@ -773,7 +773,7 @@ def main():
     )
 
     with accelerator.main_process_first():
-        train_dataset = Videoframes(split='train', args=args, tokenizer=tokenizer, img_size=(192, 384))
+        train_dataset = OVkeyframeVideo(split='train', args=args, tokenizer=tokenizer, img_size=(256, 448))
 
 
     # DataLoaders creation:
