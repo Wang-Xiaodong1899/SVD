@@ -19,6 +19,23 @@ from .resnet_action import Downsample2D
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+# sample from a logit-normal distribution
+def logit_normal_sampler(m, s=1, beta_m=15, sample_num=1000000):
+    y_samples = torch.randn(sample_num).reshape([m.shape[0], 1, 1, 1]) * s + m.reshape(m.shape[0], 1, 1, 1)
+    x_samples = beta_m * (torch.exp(y_samples) / (1 + torch.exp(y_samples)))
+    return x_samples
+
+# the $\mu(t)$ function
+def mu_t(t, a=5, mu_max=1):
+    t = t.to('cpu')
+    return 2 * mu_max * t**a - mu_max
+    
+# get $\beta_s$ for TimeNoise
+def get_beta_s(t, a, beta_m):
+    mu = mu_t(t, a=a)
+    sigma_s = logit_normal_sampler(m=mu, sample_num=t.shape[0], beta_m=beta_m)
+    return sigma_s
+
 
 @dataclass
 class UNetSpatioTemporalConditionOutput(BaseOutput):
@@ -402,6 +419,7 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         action: torch.FloatTensor = None,
         image_context: torch.FloatTensor = None,
         clip_embedding: torch.FloatTensor = None,
+        add_context_time_noise: bool = False
     ) -> Union[UNetSpatioTemporalConditionOutput, Tuple]:
         r"""
         The [`UNetSpatioTemporalConditionModel`] forward method.
@@ -476,15 +494,25 @@ class UNetSpatioTemporalConditionModel_Action(ModelMixin, ConfigMixin, UNet2DCon
         image_only_indicator = torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
 
         # TODO: add action & context frame
-        context_frames = (image_context,)
+        # NOTE tuple change to list
+        context_frames = [image_context]
 
         for module in self.context_block:
             image_context = module(image_context)
-            context_frames =  context_frames + (image_context,)
+            context_frames.append(image_context)
         context_frames = context_frames[1:] # pop the extra small feature map
         # [40, 20, 10, 5]
         # for context in context_frames:
             # print('context shape: ', context.shape)
+        
+        # NOTE add TimeNoise
+        # refer to https://github.com/thu-ml/cond-image-leakage/blob/43f769c0adfde93e61eaaa9141a21e964b6d80c2/examples/SVD/svd/training/loss.py#L46
+        if add_context_time_noise:
+            for cidx in range(len(context_frames)):
+                noise_aug_strength= get_beta_s(timesteps/1000, 5, 15).to(sample.device)
+                rnd_normal = torch.randn([batch_size, 1, 1, 1]).to(sample.device)
+                # print(noise_aug_strength)
+                context_frames[cidx] = (context_frames[cidx] + noise_aug_strength * rnd_normal).to(sample.dtype)
 
         #TODO: remember only add to first resblock
         down_block_res_samples = (sample,)

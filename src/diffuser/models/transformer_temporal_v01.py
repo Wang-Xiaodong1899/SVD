@@ -319,6 +319,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         
         if "action" in self.temp_style:
             time_context = clip_embedding # pass action text encoder_hidden_states as clip_embedding
+            # print(f"time_context shape: {time_context.shape}")
         elif "image" in self.temp_style:
             if 'text' in self.temp_style:
                 time_context = torch.cat([clip_embedding, encoder_hidden_states], dim=1)

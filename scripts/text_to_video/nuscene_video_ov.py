@@ -549,7 +549,7 @@ class OVkeyframeVideo(Dataset):
                 caption = caption + anno + ". "
             
             driving_prompt = annotation.get("Driving action", "").strip()
-            print(driving_prompt)
+            # print(driving_prompt)
 
             video = np.stack([image2arr(fn) for fn in seek_path])
             state = torch.get_rng_state()
@@ -564,20 +564,20 @@ class OVkeyframeVideo(Dataset):
             clip_video = (clip_video + 1.0) / 2.0 # -> (0, 1)
             clip_video = self.clip_transform(clip_video)
 
-            # inputs = self.tokenizer(
-            #     caption, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
-            # )
-            # inputs_id = inputs['input_ids'][0]
+            inputs = self.tokenizer(
+                caption, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+            )
+            inputs_id = inputs['input_ids'][0]
             
             # driving prompt
-            # inputs_drive = self.tokenizer(
-            #     driving_prompt, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
-            # )
-            # inputs_id_drive = inputs_drive['input_ids'][0]
+            inputs_drive = self.tokenizer(
+                driving_prompt, max_length=self.tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+            )
+            inputs_id_drive = inputs_drive['input_ids'][0]
 
             return {
-                # 'input_ids': inputs_id,
-                # "input_ids_drive": inputs_id_drive,
+                'input_ids': inputs_id,
+                "input_ids_drive": inputs_id_drive,
                 'label_imgs': video,
                 'clip_imgs': clip_video
             }
@@ -585,6 +585,3 @@ class OVkeyframeVideo(Dataset):
         except Exception as e:
             print('Bad idx %s skipped because of %s' % (index, e))
             return self.__getitem__(np.random.randint(0, self.__len__() - 1))
-
-dataset = OVkeyframeVideo(None, None)
-print(dataset[0].keys())

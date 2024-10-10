@@ -63,6 +63,23 @@ check_min_version("0.25.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
 
+# sample from a logit-normal distribution
+def logit_normal_sampler(m, s=1, beta_m=15, sample_num=1000000):
+    y_samples = torch.randn(sample_num).reshape([m.shape[0], 1, 1, 1, 1]) * s + m
+    x_samples = beta_m * (torch.exp(y_samples) / (1 + torch.exp(y_samples)))
+    return x_samples
+
+# the $\mu(t)$ function
+def mu_t(t, a=5, mu_max=1):
+    t = t.to('cpu')
+    return 2 * mu_max * t**a - mu_max
+    
+# get $\beta_s$ for TimeNoise
+def get_beta_s(t, a, beta_m):
+    mu = mu_t(t, a=a)
+    sigma_s = logit_normal_sampler(m=mu, sample_num=t.shape[0], beta_m=beta_m)
+    return sigma_s
+
 def save_model_card(
     args,
     repo_id: str,
@@ -271,7 +288,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="sd-model-finetuned",
+        default="sd-temporal-ov-drive",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -428,7 +445,7 @@ def parse_args():
     parser.add_argument(
         "--report_to",
         type=str,
-        default="tensorboard",
+        default="wandb",
         help=(
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
@@ -472,11 +489,20 @@ def parse_args():
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="t2v_v11_s192",
+        default="t2v_v11_ov_drive_448x256",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
         ),
+    )
+    parser.add_argument(
+        "--drop_context",
+        type=float,
+        default=0.1,
+        help="ratio for drop image context"
+    )
+    parser.add_argument(
+        "--add_context_time_noise", action="store_true", help="Whether or not to add time noise to image context."
     )
 
     args = parser.parse_args()
@@ -883,6 +909,9 @@ def main():
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
+        train_loss_1 = 0.0
+        train_loss_2 = 0.0
+        train_loss_last = 0.0
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
 
@@ -899,7 +928,14 @@ def main():
                 # print('encoded latents shape: ',latents.shape) # (b, l, 4, h, w)
 
                 # image context
-                image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
+                if args.drop_context > 0:
+                    prob = torch.rand(1).item()
+                    if prob < args.drop_context:
+                        image_context = torch.zeros_like(latents[:, 0])
+                    else:
+                        image_context = latents[:, 0]
+                else:
+                    image_context = latents[:, 0] # get first frame latents # (b, 4, h, w)
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -921,9 +957,16 @@ def main():
                     noisy_latents = noise_scheduler.add_noise(latents, new_noise, timesteps)
                 else:
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                
+                # TimeNoise
+                rnd_normal = torch.randn([bsz, 1, 1, 1, 1])
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                
+                # XXX driving prompt
+                # Get the text embedding for conditioning
+                encoder_hidden_states_drive = text_encoder(batch["input_ids_drive"])[0]
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
@@ -940,7 +983,7 @@ def main():
                 added_time_ids = None
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context, clip_embedding=None).sample
+                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states, added_time_ids, image_context=image_context, clip_embedding=encoder_hidden_states_drive, add_context_time_noise=args.add_context_time_noise).sample
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -959,10 +1002,24 @@ def main():
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
                     loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
                     loss = loss.mean()
+                
+                loss_1 = F.mse_loss(model_pred.float()[:, 0], target.float()[:, 0], reduction="mean")
+                loss_2 = F.mse_loss(model_pred.float()[:, 1], target.float()[:, 1], reduction="mean")
+                loss_last = F.mse_loss(model_pred.float()[:, -1], target.float()[:, -1], reduction="mean")
+
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
+                
+                # gather other loss
+                avg_loss_1 = accelerator.gather(loss_1.repeat(args.train_batch_size)).mean()
+                train_loss_1 += avg_loss_1.item() / args.gradient_accumulation_steps
+                avg_loss_2 = accelerator.gather(loss_2.repeat(args.train_batch_size)).mean()
+                train_loss_2 += avg_loss_2.item() / args.gradient_accumulation_steps
+                avg_loss_last = accelerator.gather(loss_last.repeat(args.train_batch_size)).mean()
+                train_loss_last += avg_loss_last.item() / args.gradient_accumulation_steps
+
 
                 # Backpropagate
                 accelerator.backward(loss)
@@ -977,7 +1034,13 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
+                accelerator.log({"train_loss_1": train_loss_1}, step=global_step)
+                accelerator.log({"train_loss_2": train_loss_2}, step=global_step)
+                accelerator.log({"train_loss_last": train_loss_last}, step=global_step)
                 train_loss = 0.0
+                train_loss_1 = 0.0
+                train_loss_2 = 0.0
+                train_loss_last = 0.0
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
