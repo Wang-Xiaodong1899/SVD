@@ -22,7 +22,7 @@ import torch
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
 
 from ...image_processor import VaeImageProcessor
-from diffusers.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
+from diffuser.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
 from ...schedulers import KarrasDiffusionSchedulers
 from ...utils import BaseOutput, logging
 from ...utils.torch_utils import randn_tensor
@@ -332,6 +332,8 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         action: torch.FloatTensor = None,
         image_context: torch.FloatTensor = None,
         prompt: Union[str, List[str]] = None,
+        clip_embedding: torch.FloatTensor = None,
+        prompt_temporal: Union[str, List[str]] = None,
     ):
         r"""
         The call function to the pipeline for generation.
@@ -446,6 +448,18 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
         prompt_embeds = self.text_encoder(text_input_ids.to(device), attention_mask=None)
         prompt_embeds = prompt_embeds[0]
 
+        # NOTE add extra prompt
+        text_inputs_temp = self.tokenizer(
+                prompt_temporal,
+                padding="max_length",
+                max_length=self.tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+        text_input_ids_temp = text_inputs_temp.input_ids
+        prompt_embeds_temp = self.text_encoder(text_input_ids_temp.to(device), attention_mask=None)
+        prompt_embeds_temp = prompt_embeds_temp[0]
+
         if self.text_encoder is not None:
             prompt_embeds_dtype = self.text_encoder.dtype
         elif self.unet is not None:
@@ -455,8 +469,11 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
 
         prompt_embeds = prompt_embeds.to(dtype=prompt_embeds_dtype, device=device)
 
+        prompt_embeds_temp = prompt_embeds_temp.to(dtype=prompt_embeds_dtype, device=device)
+
         # check prompt_embeds shape
         print(f'text emb shape: ', prompt_embeds.shape)
+        print(f'text_temporal emb shape: ', prompt_embeds_temp.shape)
 
         # NOTE: Stable Diffusion Video was conditioned on fps - 1, which
         # is why it is reduced here.
@@ -538,6 +555,7 @@ class ActionVideoDiffusionPipeline(DiffusionPipeline):
                     return_dict=False,
                     image_context=image_latents,
                     action=action,
+                    clip_embedding=prompt_embeds_temp,
                 )[0]
 
                 # perform guidance
