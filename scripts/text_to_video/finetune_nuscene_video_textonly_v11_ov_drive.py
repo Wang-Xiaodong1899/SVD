@@ -36,7 +36,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import sys
-sys.path.append('/root/SVD/src')
+sys.path.append('/workspace/wxd/SVD/src')
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline
@@ -217,7 +217,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/root/autodl-tmp/smodels/image-keyframes-ep30",
+        default="/volsparse1/wxd/smodels/image-keyframes-ep30",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
@@ -551,7 +551,7 @@ def get_add_time_ids(
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/root/autodl-tmp/smodels-video', args.output_dir)
+    args.output_dir = os.path.join('/volsparse1/wxd/smodels-video', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(

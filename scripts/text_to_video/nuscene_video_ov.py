@@ -422,7 +422,7 @@ class VideoValframes(Dataset):
 
 
 class OVkeyframeVideo(Dataset):
-    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', max_video_len = 8, img_size=(256, 448), data_root="/root/autodl-tmp/nuscenes/all/"):
+    def __init__(self, args, tokenizer: PreTrainedTokenizer, split='train', max_video_len = 8, img_size=(256, 448), data_root="/volsparse1/wxd/data/nuscenes/"):
         super().__init__()
         self.tokenizer = tokenizer
         self.args = args
@@ -480,7 +480,7 @@ class OVkeyframeVideo(Dataset):
         print('Total samples: %d' % len(self.scenes))
 
         # search annotations
-        json_path = f'/root/SVD/nusc_video_{split}_8_ov-7b_dict.json'
+        json_path = f'/workspace/wxd/SVD/nusc_video_{split}_8_ov-7b_dict.json'
         with open(json_path, 'r') as f:
             self.annotations = json.load(f)
     
