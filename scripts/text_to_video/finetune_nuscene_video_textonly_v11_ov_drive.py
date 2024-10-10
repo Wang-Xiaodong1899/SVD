@@ -464,7 +464,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoints_total_limit",
         type=int,
-        default=1,
+        default=2,
         help=("Max number of checkpoints to store."),
     )
     parser.add_argument(
