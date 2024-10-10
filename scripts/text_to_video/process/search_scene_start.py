@@ -23,11 +23,11 @@ def save_index_as_json(index, file_path):
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(index, f, ensure_ascii=False, indent=4)
 
-file_path = r'C://Users//wangxiaodong//Desktop//nusc_video_ov//nusc_video_train_8_ov-7b_0_700.jsonl'
+file_path = r'C://Users//wangxiaodong//Desktop//nusc_video_ov_new//nusc_video_val_8_ov-7b_0_150.jsonl'
 index = load_jsonl(file_path)
 
 
-outputfile_path = r'C://Users//wangxiaodong//Desktop//nusc_video_ov//nusc_video_train_8_ov-7b_0_700_dict.json'
+outputfile_path = r'C://Users//wangxiaodong//Desktop//nusc_video_ov_new//nusc_video_val_8_ov-7b_0_150_dict.json'
 save_index_as_json(index, outputfile_path)
 
 # scene_to_find = 'scene-0003'
