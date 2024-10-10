@@ -23,7 +23,7 @@ from transformers import AutoProcessor, AutoModelForCausalLM
 DATAROOT = '/root/autodl-tmp/nuscenes/all/'
 img_size = (256, 448)
 
-def load_models(pretrained_model_name_or_path = '/smodels/stable-diffusion-v1-4', unet_path='/root/autodl-fs/smodels/image-keyframes-ep30/unet/', device='cuda:0'):
+def load_models(pretrained_model_name_or_path = '/smodels/stable-diffusion-v1-4', unet_path='/root/autodl-tmp/smodels/image-keyframes-ep30/unet/', device='cuda:0'):
     text_encoder = CLIPTextModel.from_pretrained(
                 pretrained_model_name_or_path, subfolder="text_encoder"
     )
@@ -238,7 +238,7 @@ class val_dataset(torch.utils.data.Dataset):
 
 def main(
         base_model='/smodels/stable-diffusion-v1-4',
-        unet_path="/root/autodl-fs/smodels/image-keyframes-ep30/unet/",
+        unet_path="/root/autodl-tmp/smodels/image-keyframes-ep30/unet/",
         version = None,
         split='val',
         device='cuda:0',
@@ -282,8 +282,8 @@ def main(
     print('Save Done!')
 
 if __name__ == '__main__':
-    # unet = UNet2DConditionModel.from_pretrained("/root/autodl-fs/smodels/image-ep100/unet")
+    # unet = UNet2DConditionModel.from_pretrained("/root/autodl-tmp/smodels/image-ep100/unet")
     # unet.eval()
     # unet.to(torch.float16)
-    # unet.save_pretrained("/root/autodl-fs/smodels/image-ep100/unet-fp16")
+    # unet.save_pretrained("/root/autodl-tmp/smodels/image-ep100/unet-fp16")
     fire.Fire(main)

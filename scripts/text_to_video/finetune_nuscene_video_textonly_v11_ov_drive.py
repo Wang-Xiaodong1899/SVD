@@ -217,7 +217,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
-        default="/root/autodl-fs/smodels/image-keyframes-ep30",
+        default="/root/autodl-tmp/smodels/image-keyframes-ep30",
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
