@@ -551,7 +551,7 @@ def get_add_time_ids(
 def main():
     args = parse_args()
 
-    args.output_dir = os.path.join('/root/autodl-fs/smodels-video', args.output_dir)
+    args.output_dir = os.path.join('/root/autodl-tmp/smodels-video', args.output_dir)
 
     if args.non_ema_revision is not None:
         deprecate(
