@@ -505,12 +505,10 @@ def parse_args():
         "--add_context_time_noise", action="store_true", help="Whether or not to add time noise to image context."
     )
     parser.add_argument(
-        "--unet-dir",
+        "--ckpt",
         type=str,
         default=None,
-        help=(
-            "dir for pretrained unet checkpoint"
-        ),
+        help="resume checkpoint path"
     )
 
     args = parser.parse_args()
@@ -648,7 +646,7 @@ def main():
     # load model manually to adapt to new state_dicts
     unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style="action")
 
-    unet_dir = args.unet_dir if args.unet_dir else os.path.join(args.pretrained_model_name_or_path, 'unet')  
+    unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')  
     unet_files = os.listdir(unet_dir)
     if 'diffusion_pytorch_model.safetensors' in unet_files:
         tensors = {}
@@ -682,6 +680,18 @@ def main():
         pass
         print('miss_keys: ', miss_keys)
         print('ignore_keys: ', ignore_keys)
+    
+    del new_state_dicts
+    
+    # resume from previous checkpoint
+    if args.ckpt:
+        resume_tensors = {}
+        with safe_open(os.path.join(args.ckpt, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
+            for k in f.keys():
+                resume_tensors[k] = f.get_tensor(k)
+        unet.load_state_dict(resume_tensors, strict=False)
+        print(f'loaded weights from {args.ckpt}')
+        del resume_tensors
 
     optimize_param = []
 
