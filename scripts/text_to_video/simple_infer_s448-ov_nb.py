@@ -43,7 +43,7 @@ def load_models(pretrained_model_name_or_path = '/root/autodl-tmp/smodels-video/
     # clip_model.to(device)
 
     tokenizer = CLIPTokenizer.from_pretrained('/volsparse1/wxd/smodels/image-keyframes-ep30', subfolder="tokenizer")
-    scheduler = DDPMScheduler.from_pretrained('/volsparse1/wxd/smodels/image-keyframes-ep30', subfolder="scheduler")
+    scheduler = DDPMScheduler.from_pretrained('/volsparse1/wxd/smodels-video/sd-temporal-ov-drive-A100', subfolder="scheduler")
     feature_extractor = CLIPImageProcessor.from_pretrained('/volsparse1/wxd/smodels/image-keyframes-ep30', subfolder="feature_extractor")
 
     # unet = UNetSpatioTemporalConditionModel_Action.from_pretrained(pretrained_model_name_or_path, subfolder="unet")
