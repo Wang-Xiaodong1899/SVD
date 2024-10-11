@@ -99,7 +99,7 @@ for i in range(1):
     root_dir = "nusc_test"
     image = Image.open(image_path)
 
-    video = pipeline(image, num_frames=train_frames, prompt=prompt, action=None, height=height, width=width).frames[0]
+    video = pipeline(image, num_frames=train_frames, prompt=prompt, action=action, height=height, width=width).frames[0]
     # replace first frame
     # video[0] = image.resize((width, height))
     # for t in range(roll_out):
@@ -110,7 +110,7 @@ for i in range(1):
 
     print(f'len of final video {len(video)}')
 
-    name = os.path.basename(image_path).split('.')[0] + action.strip()
+    name = os.path.basename(image_path).split('.')[0] + action.replace(" ", "_").strip()
 
     os.makedirs(os.path.join(root_dir), exist_ok=True)
 
