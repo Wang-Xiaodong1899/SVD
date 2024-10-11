@@ -95,9 +95,9 @@ while True:
     prompt = input("prompt: ")
     action = input("action: ")
 
-    image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test_2.jpg"
+    image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test_3.jpg"
 
-    root_dir = "nusc_test_2"
+    root_dir = "nusc_test_3"
     image = Image.open(image_path)
 
     video = pipeline(image, num_frames=train_frames, prompt=prompt, prompt_temporal=action, height=height, width=width).frames[0]
