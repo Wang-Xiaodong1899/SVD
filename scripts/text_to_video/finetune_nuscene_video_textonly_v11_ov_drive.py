@@ -688,7 +688,7 @@ def main():
         with safe_open(os.path.join(args.ckpt, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
             for k in f.keys():
                 resume_tensors[k] = f.get_tensor(k)
-        miss_keys, ignore_keys = unet.load_state_dict(resume_tensors, strict=False)
+        unet.load_state_dict(resume_tensors, strict=False)
         if accelerator.is_main_process:
             print(f'loaded weights from {args.ckpt}')
         del resume_tensors
