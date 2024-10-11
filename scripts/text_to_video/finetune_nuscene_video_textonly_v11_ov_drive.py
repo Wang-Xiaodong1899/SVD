@@ -677,7 +677,6 @@ def main():
 
     miss_keys, ignore_keys = unet.load_state_dict(new_state_dicts, strict=False)
     if accelerator.is_main_process:
-        pass
         print('miss_keys: ', miss_keys)
         print('ignore_keys: ', ignore_keys)
     
@@ -689,8 +688,11 @@ def main():
         with safe_open(os.path.join(args.ckpt, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
             for k in f.keys():
                 resume_tensors[k] = f.get_tensor(k)
-        unet.load_state_dict(resume_tensors, strict=False)
-        print(f'loaded weights from {args.ckpt}')
+        miss_keys, ignore_keys = unet.load_state_dict(resume_tensors, strict=False)
+        if accelerator.is_main_process:
+            print('miss_keys: ', miss_keys)
+            print('ignore_keys: ', ignore_keys)
+            print(f'loaded weights from {args.ckpt}')
         del resume_tensors
 
     optimize_param = []
