@@ -690,8 +690,6 @@ def main():
                 resume_tensors[k] = f.get_tensor(k)
         miss_keys, ignore_keys = unet.load_state_dict(resume_tensors, strict=False)
         if accelerator.is_main_process:
-            print('miss_keys: ', miss_keys)
-            print('ignore_keys: ', ignore_keys)
             print(f'loaded weights from {args.ckpt}')
         del resume_tensors
 
