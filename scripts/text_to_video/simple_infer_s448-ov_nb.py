@@ -90,10 +90,11 @@ roll_out= 1
 width = 448
 height = 256
 
-prompt = input("prompt: ")
-action = input("action: ")
 
-for i in range(1):
+while True:
+    prompt = input("prompt: ")
+    action = input("action: ")
+
     image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test.jpg"
 
     root_dir = "nusc_test"
