@@ -20,6 +20,7 @@ import numpy as np
 import PIL.Image
 import torch
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
+from diffusers import AutoencoderKL
 
 from ...image_processor import VaeImageProcessor
 from diffuser.models.unet_action_v11 import UNetSpatioTemporalConditionModel_Action
