@@ -81,7 +81,7 @@ pipeline = load_models(pretrained_model_name_or_path, "cuda:0")
 
 print('loaded models!\n')
 
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 num_frames = 36
 train_frames = 8
@@ -94,7 +94,7 @@ prompt = input("prompt: ")
 action = input("action: ")
 
 for i in range(1):
-    image_path = f"nusc_test.jpg"
+    image_path = f"/workspace/wxd/SVD/scripts/text_to_video/nusc_test.jpg"
 
     root_dir = "nusc_test"
     image = Image.open(image_path)
