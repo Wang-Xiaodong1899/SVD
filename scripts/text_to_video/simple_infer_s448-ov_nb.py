@@ -99,7 +99,7 @@ for i in range(1):
     root_dir = "nusc_test"
     image = Image.open(image_path)
 
-    video = pipeline(image, num_frames=train_frames, prompt=prompt, action=action, height=height, width=width).frames[0]
+    video = pipeline(image, num_frames=train_frames, prompt=prompt, prompt_temporal=action, height=height, width=width).frames[0]
     # replace first frame
     # video[0] = image.resize((width, height))
     # for t in range(roll_out):
