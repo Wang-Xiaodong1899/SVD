@@ -146,7 +146,7 @@ runs
 /data
 serialization_dir
 nuscene_*.json
-*.jpg
+# *.jpg
 
 # ckpt
 sd-drive*
