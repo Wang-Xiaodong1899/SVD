@@ -504,6 +504,14 @@ def parse_args():
     parser.add_argument(
         "--add_context_time_noise", action="store_true", help="Whether or not to add time noise to image context."
     )
+    parser.add_argument(
+        "--unet-dir",
+        type=str,
+        default=None,
+        help=(
+            "dir for pretrained unet checkpoint"
+        ),
+    )
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -640,11 +648,16 @@ def main():
     # load model manually to adapt to new state_dicts
     unet = UNetSpatioTemporalConditionModel_Action(cross_attention_dim=768, in_channels=4, temp_style="action")
 
-    unet_dir = os.path.join(args.pretrained_model_name_or_path, 'unet')
+    unet_dir = args.unet_dir if args.unet_dir else os.path.join(args.pretrained_model_name_or_path, 'unet')  
     unet_files = os.listdir(unet_dir)
     if 'diffusion_pytorch_model.safetensors' in unet_files:
         tensors = {}
         with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.safetensors"), framework="pt", device='cpu') as f:
+            for k in f.keys():
+                tensors[k] = f.get_tensor(k)
+    elif 'diffusion_pytorch_model.fp16.safetensors' in unet_files:
+        tensors = {}
+        with safe_open(os.path.join(unet_dir, "diffusion_pytorch_model.fp16.safetensors"), framework="pt", device='cpu') as f:
             for k in f.keys():
                 tensors[k] = f.get_tensor(k)
     else:
