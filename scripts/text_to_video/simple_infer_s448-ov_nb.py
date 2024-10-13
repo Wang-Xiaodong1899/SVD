@@ -90,12 +90,13 @@ roll_out= 1
 width = 448
 height = 256
 
+image_path = input("image_path: ")
+
+image_path = os.path.join("/workspace/wxd/SVD", image_path)
 
 while True:
     prompt = input("prompt: ")
     action = input("action: ")
-
-    image_path = f"/workspace/wxd/SVD/nusc_test_4.jpg"
 
     root_dir = os.path.basename(image_path).split('.')[0]
     image = Image.open(image_path)
