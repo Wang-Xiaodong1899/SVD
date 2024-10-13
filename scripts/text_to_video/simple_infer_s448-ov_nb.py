@@ -76,7 +76,7 @@ def load_models(pretrained_model_name_or_path = '/root/autodl-tmp/smodels-video/
     pipeline = pipeline.to(device).to(torch.float16)
     return pipeline
 
-pretrained_model_name_or_path = '/volsparse1/wxd/smodels-video/sd-temporal-ov-drive-A100/checkpoint-4000'
+pretrained_model_name_or_path = '/volsparse1/wxd/smodels-video/sd-temporal-ov-drive-A100-resume-4k/checkpoint-6000'
 pipeline = load_models(pretrained_model_name_or_path, "cuda:0")
 
 print('loaded models!\n')
