@@ -528,7 +528,9 @@ class OVkeyframeVideo(Dataset):
             my_scene = self.scenes[index]
             all_frames = self.frames_group[my_scene]
             
-            seek_start = random.randint(0, len(all_frames) - self.max_video_len)
+            # NOTE fix bug
+            seek_start = random.randint(0, len(all_frames))
+            
             
             seek_path = all_frames[seek_start: seek_start + self.max_video_len]            
             # get dict
